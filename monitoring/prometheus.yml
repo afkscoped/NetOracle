@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'netoracle'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['host.docker.internal:8000'] # Change to localhost:8000 if Prometheus is not running in Docker

@@ -1,0 +1,249 @@
+{
+  "kind": "audit",
+  "entries": [
+    {
+      "id": 27,
+      "timestamp": "2026-05-03T15:02:43.861747+00:00",
+      "event_type": "cloud_export",
+      "payload": {
+        "provider": "local",
+        "status": "saved",
+        "path": "exports\\netoracle-audit.json",
+        "note": "Set CLOUD_PROVIDER=supabase or aws to export to a free-tier cloud account."
+      }
+    },
+    {
+      "id": 26,
+      "timestamp": "2026-05-03T15:02:43.844970+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 25,
+      "timestamp": "2026-05-03T15:02:43.738640+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 24,
+      "timestamp": "2026-05-03T15:02:43.642736+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 23,
+      "timestamp": "2026-05-03T15:02:43.547009+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 22,
+      "timestamp": "2026-05-03T15:02:43.447688+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 21,
+      "timestamp": "2026-05-03T15:02:43.345871+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 20,
+      "timestamp": "2026-05-03T15:02:43.251303+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 19,
+      "timestamp": "2026-05-03T15:02:43.156684+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 18,
+      "timestamp": "2026-05-03T15:02:43.059568+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 17,
+      "timestamp": "2026-05-03T15:02:42.956577+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 16,
+      "timestamp": "2026-05-03T15:02:42.858576+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 15,
+      "timestamp": "2026-05-03T15:02:42.755894+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 14,
+      "timestamp": "2026-05-03T15:02:42.639525+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 13,
+      "timestamp": "2026-05-03T15:02:42.527728+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 12,
+      "timestamp": "2026-05-03T15:02:42.427521+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 11,
+      "timestamp": "2026-05-03T15:02:42.338047+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 10,
+      "timestamp": "2026-05-03T15:02:42.241582+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 9,
+      "timestamp": "2026-05-03T15:02:42.144770+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 8,
+      "timestamp": "2026-05-03T15:02:42.046599+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 7,
+      "timestamp": "2026-05-03T15:02:41.953855+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 6,
+      "timestamp": "2026-05-03T15:02:41.865998+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 5,
+      "timestamp": "2026-05-03T15:02:41.779673+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 4,
+      "timestamp": "2026-05-03T15:02:41.684354+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 3,
+      "timestamp": "2026-05-03T15:02:41.588830+00:00",
+      "event_type": "telemetry_tick",
+      "payload": {
+        "frames": 12,
+        "fault": null
+      }
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-05-03T15:02:41.499088+00:00",
+      "event_type": "rag_seeded",
+      "payload": {
+        "incidents": 8
+      }
+    },
+    {
+      "id": 1,
+      "timestamp": "2026-05-03T15:02:41.435429+00:00",
+      "event_type": "topology_seeded",
+      "payload": {
+        "nodes": 17,
+        "edges": 18
+      }
+    }
+  ]
+}

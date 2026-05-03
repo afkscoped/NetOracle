@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import Body, FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.database import db
 from app.schemas import DemoRunRequest, FaultInjectionRequest, NaturalLanguageQuery
@@ -25,6 +26,8 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(title="NetOracle", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+Instrumentator().instrument(app).expose(app)
 
 
 @app.on_event("startup")
@@ -87,6 +90,11 @@ def data_schema() -> dict:
 async def upload_telemetry(file: UploadFile = File(...)) -> dict:
     content = (await file.read()).decode("utf-8")
     return {"ok": True, "data": ingestion_service.ingest_telemetry(content, file.filename or "uploaded")}
+
+
+@app.post("/api/telemetry/stream")
+def stream_telemetry(payload: dict[str, Any] = Body(...)) -> dict:
+    return {"ok": True, "data": ingestion_service.ingest_telemetry_stream(payload)}
 
 
 @app.post("/api/data/upload-topology")

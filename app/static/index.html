@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NetOracle</title>
+  <link rel="icon" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero glass">
+      <div>
+        <p class="eyebrow">Federated Causal Network Fault Intelligence</p>
+        <h1>NetOracle</h1>
+        <p class="subtitle">Predict faults, localise infrastructure, diagnose root cause, and safely remediate through one no-Docker local interface.</p>
+      </div>
+      <div class="orb-wrap">
+        <div class="orb"><span></span><span></span><span></span></div>
+      </div>
+    </section>
+
+    <section class="controls glass">
+      <div class="control-grid">
+        <label>Slice<select id="slice"><option>slice_1</option><option>slice_2</option><option>slice_3</option></select></label>
+        <label>Node<select id="node"><option>upf_1</option><option>gnb_1</option><option>router_1</option><option>app_1</option><option>upf_2</option><option>upf_3</option></select></label>
+        <label>Fault<select id="fault"><option>congestion</option><option>cpu_overload</option><option>packet_loss</option><option>vnf_degradation</option><option>latency_spike</option></select></label>
+        <label>Severity<input id="severity" type="range" min="0.2" max="1" step="0.05" value="0.85" /></label>
+      </div>
+      <div class="actions">
+        <button id="runDemo">Run closed-loop demo</button>
+        <button id="tick" class="secondary">Generate telemetry tick</button>
+        <button id="refresh" class="secondary">Refresh</button>
+        <a class="secondary link-button" href="/twin">Open 3D digital twin</a>
+        <button id="runBenchmark" class="secondary">Run benchmark</button>
+        <button id="runHopfield" class="secondary">Hopfield allocator</button>
+        <button id="exportCloud" class="secondary">Export report/cloud</button>
+      </div>
+    </section>
+
+    <section class="controls glass">
+      <div class="panel-head"><h2>User Network Data Input</h2><span>CSV/JSON telemetry and JSON topology upload</span></div>
+      <div class="control-grid">
+        <label>Telemetry CSV/JSON<input id="telemetryFile" type="file" accept=".csv,.json" /></label>
+        <label>Topology JSON<input id="topologyFile" type="file" accept=".json" /></label>
+        <label>Benchmark scenarios<input id="benchmarkScenarios" type="number" min="10" max="300" value="60" /></label>
+        <label>RL reward<input id="rlReward" type="number" min="-1" max="1" step="0.1" value="0.8" /></label>
+      </div>
+      <div class="actions">
+        <button id="uploadTelemetry">Upload telemetry</button>
+        <button id="uploadTopology" class="secondary">Upload topology</button>
+        <button id="analyseUploaded" class="secondary">Analyse uploaded data</button>
+        <button id="showPolicy" class="secondary">Show RL policy</button>
+      </div>
+    </section>
+
+    <section class="grid metrics">
+      <article class="card"><span>Fault Probability</span><strong id="probability">--</strong><small id="horizon">No alert yet</small></article>
+      <article class="card"><span>Prediction AUC Proxy</span><strong id="auc">--</strong><small>Causal attention GRU</small></article>
+      <article class="card"><span>Diagnosis Confidence</span><strong id="confidence">--</strong><small>Multi-agent vote</small></article>
+      <article class="card"><span>Remediation</span><strong id="remediation">--</strong><small>Risk-gated action</small></article>
+    </section>
+
+    <section class="workspace">
+      <article class="panel glass wide">
+        <div class="panel-head"><h2>Telemetry Pulse</h2><span>live synthetic 5G fabric</span></div>
+        <canvas id="telemetryChart" width="900" height="280"></canvas>
+      </article>
+      <article class="panel glass">
+        <div class="panel-head"><h2>Causal DAG</h2><span>federated edge voting</span></div>
+        <div id="dag" class="network"></div>
+      </article>
+      <article class="panel glass">
+        <div class="panel-head"><h2>Topology Localisation</h2><span>property graph path</span></div>
+        <div id="topology" class="network"></div>
+      </article>
+      <article class="panel glass wide">
+        <div class="panel-head"><h2>Diagnosis Console</h2><span>RAG + LLM ensemble</span></div>
+        <pre id="diagnosis">Run a demo to see graph-grounded diagnosis.</pre>
+      </article>
+      <article class="panel glass wide">
+        <div class="panel-head"><h2>Ask the Network Graph</h2><span>NL-to-Cypher</span></div>
+        <div class="query-row"><input id="question" value="Which VNFs are connected to Slice 1?" /><button id="ask">Ask</button></div>
+        <pre id="answer">Cypher output will appear here.</pre>
+      </article>
+      <article class="panel glass wide">
+        <div class="panel-head"><h2>Benchmarks, Cloud, RL, Wireless</h2><span>evaluation and adaptive control</span></div>
+        <pre id="opsOutput">Run benchmarks, Hopfield allocation, cloud export, or inspect RL policy here.</pre>
+      </article>
+      <article class="panel glass">
+        <div class="panel-head"><h2>Audit Trail</h2><span>explainable control loop</span></div>
+        <div id="audit" class="audit"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

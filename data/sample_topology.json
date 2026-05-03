@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {"node_id": "slice_9", "node_type": "Slice", "label": "Uploaded Research Slice", "properties": {"sla": "experimental"}},
+    {"node_id": "gnb_9", "node_type": "gNB", "label": "Uploaded gNB", "properties": {"region": "lab"}},
+    {"node_id": "upf_9", "node_type": "UPF", "label": "Uploaded UPF", "properties": {"replicas": 1}},
+    {"node_id": "router_9", "node_type": "Router", "label": "Uploaded Router", "properties": {"vendor": "simulated"}}
+  ],
+  "edges": [
+    {"source_id": "slice_9", "target_id": "gnb_9", "relation": "USES"},
+    {"source_id": "gnb_9", "target_id": "upf_9", "relation": "FORWARDS_TO"},
+    {"source_id": "upf_9", "target_id": "router_9", "relation": "EXITS_VIA"}
+  ]
+}

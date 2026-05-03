@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NetOracle 3D Twin</title>
+  <link rel="icon" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/twin.css" />
+</head>
+<body>
+  <div id="scene"></div>
+  <aside class="hud">
+    <div class="brand"><span></span><div><b>NetOracle Twin</b><small>Three.js fault digital twin</small></div></div>
+    <div class="buttons">
+      <a href="/">Dashboard</a>
+      <button id="demo">Inject fault</button>
+      <button id="reload">Reload scene</button>
+    </div>
+    <label>Fault heat threshold<input id="threshold" type="range" min="0" max="1" step="0.05" value="0.45" /></label>
+    <section>
+      <h2>Selected Element</h2>
+      <pre id="details">Click a glowing node to inspect metrics, risk, graph type, and fault state.</pre>
+    </section>
+    <section>
+      <h2>Replay</h2>
+      <div id="timeline"></div>
+    </section>
+  </aside>
+  <div class="legend"><span class="risk"></span> active/high-risk fault path <span class="safe"></span> normal infrastructure</div>
+  <script type="module" src="/static/twin.js"></script>
+</body>
+</html>

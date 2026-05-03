@@ -91,6 +91,11 @@ class IngestionService:
         db.audit("telemetry_uploaded", {"filename": filename, "frames": len(frames)})
         return {"filename": filename, "frames_ingested": len(frames), "sample": frames[:3]}
 
+    def ingest_telemetry_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
+        frame = self._normalise_json_record(payload)
+        db.insert_telemetry(frame)
+        return {"status": "ingested", "frame": frame}
+
     def ingest_topology(self, content: str, filename: str = "topology.json") -> dict[str, Any]:
         payload = json.loads(content)
         nodes = payload.get("nodes", [])

@@ -7,3 +7,7 @@ data/*.db
 *.sqlite
 *.sqlite3
 .DS_Store
+reports/
+demo_output.json
+extract_html.py
+extracted_docs.txt

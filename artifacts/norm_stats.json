@@ -1,0 +1,26 @@
+{
+  "cpu": {
+    "mean": 48.065,
+    "std": 5.12
+  },
+  "memory": {
+    "mean": 50.0407,
+    "std": 3.2177
+  },
+  "latency_ms": {
+    "mean": 24.7834,
+    "std": 4.65
+  },
+  "packet_loss": {
+    "mean": 0.0073,
+    "std": 0.0056
+  },
+  "throughput_mbps": {
+    "mean": 859.3425,
+    "std": 66.2418
+  },
+  "prb_utilization": {
+    "mean": 0.4803,
+    "std": 0.05
+  }
+}

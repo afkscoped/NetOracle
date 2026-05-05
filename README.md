@@ -54,13 +54,19 @@ This prototype includes practical versions of advanced mechanisms inspired by re
 - **Optional free-tier cloud export:** AWS S3/DynamoDB or Supabase integration.
 - **No-Docker scalable local architecture:** the same APIs can scale to proper brokers, graph DBs, vector DBs, and distributed workers later.
 
-Recommended future upgrade papers/framework directions:
+Implemented advanced AI/ML features (Member 2):
+
+- **CausalAttentionGRU (CTGNN):** live fault prediction from trained PyTorch model (AUC 0.9236).
+- **Split Conformal Prediction:** 90% coverage-guaranteed uncertainty intervals on fault probabilities (Angelopoulos & Bates, 2023).
+- **NOTEARS causal discovery:** gradient-based DAG learning (Zheng et al., NeurIPS 2018) with federated edge voting.
+- **Live benchmark suite:** ablation study comparing CTGNN vs heuristic vs random baselines.
+- **39 unit tests** covering intelligence pipeline and Hopfield wireless allocator.
+
+Recommended future upgrade directions:
 
 - **Temporal Graph Networks / TGAT / DySAT:** for dynamic graph-time prediction.
-- **Causal discovery with PCMCI / NOTEARS / DAG-GNN:** stronger causal discovery than simple PC-style correlation filtering.
 - **GraphRAG:** combine property-graph neighbourhood retrieval with vector retrieval for root cause analysis.
 - **Mixture-of-Experts LLM routing:** route network diagnosis to specialist agents by fault type.
-- **Conformal prediction:** add calibrated uncertainty bounds before remediation.
 - **Safe RL / constrained MDPs:** use formal safety constraints before executing network actions.
 - **Ray Serve or Temporal:** scale prediction/diagnosis/remediation as independent services without Docker dependency.
 
@@ -352,12 +358,12 @@ This is a robust academic prototype, not a production telecom control plane.
 
 ## Best Next Upgrades
 
-For a stronger final-year/research-grade version:
+For further research-grade extensions:
 
 1. Replace local graph store with KuzuDB or Neo4j Desktop.
 2. Replace hash-vector RAG with FAISS or Qdrant.
-3. Integrate trained CTGNN model from `training/` into live inference pipeline.
-4. Add conformal uncertainty calibration before remediation.
+3. ~~Integrate trained CTGNN model into live inference pipeline.~~ ✅ Done (Member 2).
+4. ~~Add conformal uncertainty calibration before remediation.~~ ✅ Done (Member 2).
 5. Add Ray Serve workers for scalable no-Docker distributed inference.
 6. Add Open5GS/UERANSIM telemetry as an optional real source.
 7. Add Prometheus/Grafana integration for metrics export.

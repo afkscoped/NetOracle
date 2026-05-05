@@ -1,0 +1,18 @@
+{
+  "model": "CausalAttentionGRU",
+  "best_auc": 0.9236,
+  "device": "cuda",
+  "epochs": 12,
+  "feature_dim": 6,
+  "hidden_dim": 96,
+  "window": 12,
+  "horizon": 20,
+  "total_samples": 539616,
+  "train": 323769,
+  "cal": 107923,
+  "test": 107924,
+  "conformal_q_hat": 0.7714040695134732,
+  "conformal_coverage": 0.8997,
+  "notears_global_edges": 0,
+  "test_auc": 0.9236
+}

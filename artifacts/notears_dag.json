@@ -1,0 +1,221 @@
+{
+  "algorithm": "NOTEARS",
+  "per_slice": {
+    "slice_1": {
+      "adjacency_matrix": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "edges": [],
+      "n_edges": 0,
+      "shd": 6,
+      "metrics_order": [
+        "cpu",
+        "memory",
+        "latency_ms",
+        "packet_loss",
+        "throughput_mbps",
+        "prb_utilization"
+      ]
+    },
+    "slice_2": {
+      "adjacency_matrix": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "edges": [],
+      "n_edges": 0,
+      "shd": 6,
+      "metrics_order": [
+        "cpu",
+        "memory",
+        "latency_ms",
+        "packet_loss",
+        "throughput_mbps",
+        "prb_utilization"
+      ]
+    },
+    "slice_3": {
+      "adjacency_matrix": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "edges": [],
+      "n_edges": 0,
+      "shd": 6,
+      "metrics_order": [
+        "cpu",
+        "memory",
+        "latency_ms",
+        "packet_loss",
+        "throughput_mbps",
+        "prb_utilization"
+      ]
+    }
+  },
+  "global_federated_edges": [],
+  "ground_truth": [
+    {
+      "source": "cpu",
+      "target": "latency_ms"
+    },
+    {
+      "source": "memory",
+      "target": "latency_ms"
+    },
+    {
+      "source": "prb_utilization",
+      "target": "latency_ms"
+    },
+    {
+      "source": "latency_ms",
+      "target": "packet_loss"
+    },
+    {
+      "source": "packet_loss",
+      "target": "throughput_mbps"
+    },
+    {
+      "source": "cpu",
+      "target": "throughput_mbps"
+    }
+  ]
+}

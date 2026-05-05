@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let lastDemo = null;
+let demoActive = false;
 
 async function api(path, options = {}) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
@@ -99,17 +100,23 @@ async function refresh() {
   network($('dag'), dagNodes, dag.data.global_edges.map(e => [e.source, e.target]));
   const nodes = topo.data.nodes.filter(n => ['Slice', 'gNB', 'UPF', 'Router', 'Service'].includes(n.node_type)).slice(0, 12).map(n => ({ id: n.node_id, label: n.node_id }));
   network($('topology'), nodes, topo.data.edges.map(e => [e.source_id, e.target_id]));
+  const modelName = metrics.data.model_active || 'heuristic';
   $('auc').textContent = fmtPct(metrics.data.auc_proxy);
-  const alert = alerts.data[0];
-  if (alert) {
-    $('probability').textContent = fmtPct(alert.fault_probability);
-    $('horizon').textContent = `${alert.horizon_minutes} min horizon • ${alert.node_id}`;
+  $('aucLabel').textContent = modelName === 'CausalAttentionGRU' ? 'Causal attention GRU' : 'Heuristic sigmoid';
+  if (!demoActive) {
+    const alert = alerts.data[0];
+    if (alert) {
+      $('probability').textContent = fmtPct(alert.fault_probability);
+      const bounds = alert.prob_lower != null ? ` [${fmtPct(alert.prob_lower)}–${fmtPct(alert.prob_upper)}]` : '';
+      $('horizon').textContent = `${alert.horizon_minutes} min horizon • ${alert.node_id}${bounds}`;
+    }
   }
   $('audit').innerHTML = audit.data.map(item => `<div class="audit-item"><b>${item.event_type}</b><br><small>${item.timestamp}</small></div>`).join('');
 }
 
 async function runDemo() {
   $('diagnosis').textContent = 'Running closed loop...';
+  demoActive = true;
   const body = {
     slice_id: $('slice').value,
     node_id: $('node').value,
@@ -119,11 +126,19 @@ async function runDemo() {
   };
   const result = await api('/api/demo/run', { method: 'POST', body: JSON.stringify(body) });
   lastDemo = result.data;
-  $('probability').textContent = fmtPct(lastDemo.alert.fault_probability);
+  const alert = lastDemo.alert;
+  const prob = alert.fault_probability;
+  $('probability').textContent = fmtPct(prob);
+  const bounds = alert.prob_lower != null ? ` [${fmtPct(alert.prob_lower)}–${fmtPct(alert.prob_upper)}]` : '';
+  $('horizon').textContent = `${alert.horizon_minutes || 10} min • ${alert.node_id} • ${alert.fault_type || body.fault_type}${bounds}`;
   $('confidence').textContent = fmtPct(lastDemo.diagnosis.confidence);
+  const modelLabel = alert.model_used || 'heuristic';
+  $('aucLabel').textContent = modelLabel === 'CausalAttentionGRU' ? 'CTGNN live inference' : modelLabel;
   $('remediation').textContent = lastDemo.remediation.action.replaceAll('_', ' ');
-  $('diagnosis').textContent = JSON.stringify({ alert: lastDemo.alert, graph_context: lastDemo.graph_context, diagnosis: lastDemo.diagnosis, remediation: lastDemo.remediation }, null, 2);
+  $('remLabel').textContent = alert.calibrated ? `Conformal calibrated • q̂=${alert.prob_upper - prob > 0 ? (alert.prob_upper - prob).toFixed(2) : '?'}` : 'Risk-gated action';
+  $('diagnosis').textContent = JSON.stringify({ alert, graph_context: lastDemo.graph_context, diagnosis: lastDemo.diagnosis, remediation: lastDemo.remediation }, null, 2);
   await refresh();
+  demoActive = false;
 }
 
 async function ask() {

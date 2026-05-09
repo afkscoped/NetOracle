@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 import time
 from typing import Any
@@ -29,17 +30,21 @@ from app.services.wireless import wireless_optimizer_service
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="NetOracle", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    graph_service.seed()
+    rag_llm_service.seed()
+    telemetry_service.warm_start(24)
+    yield
+    # Shutdown logic (none needed currently)
+
+app = FastAPI(title="NetOracle", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 Instrumentator().instrument(app).expose(app)
 
 
-@app.on_event("startup")
-def startup() -> None:
-    graph_service.seed()
-    rag_llm_service.seed()
-    telemetry_service.warm_start(24)
 
 
 @app.get("/")

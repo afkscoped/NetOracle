@@ -15,7 +15,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-mock playwright gymnasium pytest-asyncio pytest-playwright
+        pip install pytest pytest-mock playwright gymnasium hypothesis pytest-asyncio pytest-playwright
         playwright install chromium
     - name: Run Backend Tests
       run: pytest tests/ -v

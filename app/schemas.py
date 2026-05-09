@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Any
 
 
@@ -22,9 +22,7 @@ class FaultInjectionRequest(BaseModel):
 
 class NaturalLanguageQuery(BaseModel):
     question: str = Field(alias="query")
-
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DemoRunRequest(BaseModel):

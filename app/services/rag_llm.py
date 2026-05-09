@@ -8,6 +8,7 @@ from typing import Any
 import requests
 
 from app.database import db, decode, encode
+from app.services.graph import graph_service
 from app.settings import get_settings
 
 
@@ -39,6 +40,42 @@ def embed(text: str, dims: int = 64) -> list[float]:
 
 def cosine(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
+
+
+def build_graphrag_context(node_id: str, vector_hits: list[dict[str, Any]]) -> str:
+    """
+    Combines vector RAG hits with graph neighbourhood context.
+    This is the GraphRAG fusion step — injected into the LLM prompt
+    so that the diagnostic expert has both retrieval-augmented incident
+    history AND live topology structure.
+    """
+    # Vector context (existing RAG hits)
+    vector_lines = []
+    for hit in vector_hits[:3]:
+        title = hit.get("title", hit.get("incident_id", "unknown"))
+        body = hit.get("body", "")
+        score = hit.get("score", 0)
+        vector_lines.append(f"- [{score:.3f}] {title}: {body[:200]}")
+    vector_context = "\n".join(vector_lines) if vector_lines else "No similar incidents found."
+
+    # Graph neighbourhood context (new GraphRAG path)
+    neighbourhood = graph_service.get_node_neighbourhood(node_id, depth=2)
+    graph_lines = []
+    for edge in neighbourhood.get("edges", []):
+        graph_lines.append(
+            f"  {edge['source']} --[{edge['relation']}]--> {edge['target']}"
+        )
+    graph_context = "\n".join(graph_lines) if graph_lines else "No neighbours found."
+
+    node_count = len(neighbourhood.get("nodes", []))
+
+    return f"""
+## Relevant Past Incidents (Vector RAG)
+{vector_context}
+
+## Topology Context (GraphRAG — {node_count} neighbours, depth=2)
+{graph_context}
+"""
 
 
 class RagLlmService:
@@ -102,10 +139,16 @@ class RagLlmService:
 
     def diagnose(self, alert: dict[str, Any], graph_context: dict[str, Any]) -> dict[str, Any]:
         retrieved = self.retrieve(" ".join([alert.get("fault_type", ""), " ".join(alert.get("top_features", []))]))
+
+        # --- GraphRAG fusion: combine vector hits with graph neighbourhood ---
+        graphrag_context_str = build_graphrag_context(alert.get("node_id", ""), retrieved)
+        neighbourhood = graph_service.get_node_neighbourhood(alert.get("node_id", ""), depth=2)
+
         prompt = json.dumps({
             "task": "Return JSON with root_cause, fault_type, confidence, recommended_action, risk.",
             "alert": alert,
             "graph_context": graph_context,
+            "graphrag_context": graphrag_context_str,
             "similar_incidents": retrieved,
         })
         votes = []
@@ -140,9 +183,11 @@ class RagLlmService:
             "confidence": round(confidence, 3),
             "evidence": {
                 "graph_path": [node["node_id"] for node in graph_context.get("affected_path", [])],
+                "graph_neighbourhood": neighbourhood,
+                "graphrag_context": graphrag_context_str,
                 "similar_incidents": retrieved,
                 "llm_votes": votes,
-                "ensemble_method": "confidence-weighted multi-agent vote with graph-grounded RAG",
+                "ensemble_method": "confidence-weighted multi-agent vote with GraphRAG topology fusion",
             },
             "recommended_action": actions.get(final_fault, "escalate"),
             "risk": risk,

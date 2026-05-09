@@ -1,8 +1,33 @@
+import json
+import logging
 import re
 from collections import deque
-from typing import Any
+from typing import Any, List
+
+import requests
+from pydantic import BaseModel, Field
 
 from app.database import db, decode, encode
+from app.settings import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas for structured LLM extraction
+# ---------------------------------------------------------------------------
+
+class Relationship(BaseModel):
+    """A single directed relationship between two network entities."""
+    source: str = Field(description="The starting entity (e.g. node_id or component name)")
+    target: str = Field(description="The destination entity")
+    relation_type: str = Field(description="How they are connected (e.g. DEPENDS_ON, CAUSES, FIXES)")
+    context: str = Field(default="", description="Brief explanation of the relationship")
+
+
+class GraphExtract(BaseModel):
+    """Collection of relationships extracted from unstructured text."""
+    relationships: List[Relationship]
 
 
 TOPOLOGY_NODES = [
@@ -103,6 +128,250 @@ class GraphService:
         }
         db.audit("fault_localised", context)
         return context
+
+    def get_node_neighbourhood(self, node_id: str, depth: int = 2) -> dict[str, Any]:
+        """
+        Returns the k-hop neighbourhood of a node from the SQLite property graph.
+        Used by GraphRAG to inject topology context into LLM prompts.
+        """
+        self.seed()
+        node_map = {node["node_id"]: node for node in self.nodes()}
+        adjacency = self._adjacency()
+
+        visited: set[str] = set()
+        frontier = [node_id]
+        neighbourhood_nodes: list[dict[str, Any]] = []
+        neighbourhood_edges: list[dict[str, Any]] = []
+
+        # Include root node if it exists
+        if node_id in node_map:
+            root = node_map[node_id]
+            neighbourhood_nodes.append({
+                "node_id": root["node_id"],
+                "node_type": root["node_type"],
+                "label": root["label"],
+                "hop": 0,
+            })
+
+        for hop in range(1, depth + 1):
+            next_frontier: list[str] = []
+            for nid in frontier:
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                for neighbour_id, relation in adjacency.get(nid, []):
+                    neighbourhood_edges.append({
+                        "source": nid,
+                        "target": neighbour_id,
+                        "relation": relation,
+                    })
+                    if neighbour_id not in visited and neighbour_id not in set(frontier):
+                        next_frontier.append(neighbour_id)
+                        if neighbour_id in node_map:
+                            meta = node_map[neighbour_id]
+                            neighbourhood_nodes.append({
+                                "node_id": meta["node_id"],
+                                "node_type": meta["node_type"],
+                                "label": meta["label"],
+                                "hop": hop,
+                            })
+            frontier = next_frontier
+
+        return {
+            "root": node_id,
+            "depth": depth,
+            "nodes": neighbourhood_nodes,
+            "edges": neighbourhood_edges,
+        }
+
+    # -------------------------------------------------------------------
+    # GraphRAG: LLM-based entity / relationship extraction
+    # -------------------------------------------------------------------
+
+    def _extract_via_ollama(self, text: str) -> GraphExtract | None:
+        """Attempt extraction using a local Ollama model."""
+        settings = get_settings()
+        system_prompt = (
+            "You are a technical knowledge extraction agent for a 5G network monitoring system. "
+            "Extract system components, errors, faults, and agent actions as entities. "
+            "Identify strict, logical relationships between them. "
+            "Return ONLY valid JSON matching this schema: "
+            '{"relationships": [{"source": "...", "target": "...", "relation_type": "...", "context": "..."}]}'
+        )
+        try:
+            response = requests.post(
+                f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+                json={
+                    "model": settings.model_names[0] if settings.model_names else "phi3:mini",
+                    "prompt": f"{system_prompt}\n\nExtract relationships from:\n{text}",
+                    "stream": False,
+                    "format": "json",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            raw = response.json().get("response", "{}")
+            return GraphExtract.model_validate_json(raw)
+        except Exception as exc:
+            logger.debug("Ollama extraction failed: %s", exc)
+            return None
+
+    def _extract_via_openai(self, text: str) -> GraphExtract | None:
+        """Attempt extraction using OpenAI API (requires OPENAI_API_KEY)."""
+        settings = get_settings()
+        api_key = settings.openai_api_key
+        if not api_key:
+            return None
+        system_prompt = (
+            "You are a technical knowledge extraction agent for a 5G network monitoring system. "
+            "Extract system components, errors, faults, and agent actions as entities. "
+            "Identify strict, logical relationships between them. "
+            "Return ONLY valid JSON matching this schema: "
+            '{"relationships": [{"source": "...", "target": "...", "relation_type": "...", "context": "..."}]}'
+        )
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "gpt-4o",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Extract relationships from:\n{text}"},
+                    ],
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+            return GraphExtract.model_validate_json(raw)
+        except Exception as exc:
+            logger.debug("OpenAI extraction failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _extract_via_regex(text: str) -> GraphExtract:
+        """
+        Heuristic fallback: extract simple component relationships using regex.
+        Looks for known 5G entity patterns in unstructured text.
+        """
+        entity_patterns = {
+            "UPF": r"\b(upf[_\s]?\d*)\b",
+            "gNB": r"\b(gnb[_\s]?\d*)\b",
+            "Slice": r"\b(slice[_\s]?\d*)\b",
+            "Router": r"\b(router[_\s]?\d*)\b",
+            "Service": r"\b((?:service|app)[_\s]?\d*)\b",
+        }
+        found_entities: list[tuple[str, str]] = []  # (normalised_id, entity_type)
+        for etype, pattern in entity_patterns.items():
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                normalised = re.sub(r"[\s]+", "_", match.group(1).strip().lower())
+                found_entities.append((normalised, etype))
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique: list[tuple[str, str]] = []
+        for eid, etype in found_entities:
+            if eid not in seen:
+                seen.add(eid)
+                unique.append((eid, etype))
+
+        # Build pairwise relationships based on fault keywords
+        relationships: list[Relationship] = []
+        fault_keywords = re.findall(r"\b(congestion|overload|latency|packet.?loss|degradation|spike|failure|timeout)\b", text, re.IGNORECASE)
+        relation = "RELATED_TO"
+        if fault_keywords:
+            keyword = fault_keywords[0].lower().replace(" ", "_")
+            relation_map = {
+                "congestion": "CAUSES", "overload": "CAUSES", "latency": "AFFECTS",
+                "packet_loss": "AFFECTS", "degradation": "DEGRADES", "spike": "AFFECTS",
+                "failure": "CAUSES", "timeout": "CAUSES",
+            }
+            relation = relation_map.get(keyword, "RELATED_TO")
+
+        for i in range(len(unique) - 1):
+            relationships.append(Relationship(
+                source=unique[i][0],
+                target=unique[i + 1][0],
+                relation_type=relation,
+                context=f"Extracted from: {text[:120]}",
+            ))
+
+        return GraphExtract(relationships=relationships)
+
+    def extract_graph_data(self, text: str) -> GraphExtract:
+        """
+        Extract structured graph data from unstructured text.
+        Tries Ollama → OpenAI → regex-heuristic fallback (graceful degradation).
+        """
+        # 1. Try local Ollama
+        result = self._extract_via_ollama(text)
+        if result and result.relationships:
+            logger.info("Extraction via Ollama: %d relationships", len(result.relationships))
+            return result
+
+        # 2. Try OpenAI
+        result = self._extract_via_openai(text)
+        if result and result.relationships:
+            logger.info("Extraction via OpenAI: %d relationships", len(result.relationships))
+            return result
+
+        # 3. Regex heuristic fallback
+        result = self._extract_via_regex(text)
+        logger.info("Extraction via regex fallback: %d relationships", len(result.relationships))
+        return result
+
+    def ingest_extracted_relationships(self, graph_data: GraphExtract) -> dict[str, Any]:
+        """
+        Merge extracted relationships into the SQLite property graph.
+        Uses INSERT OR IGNORE to avoid duplicates.
+        """
+        nodes_added = 0
+        edges_added = 0
+
+        for rel in graph_data.relationships:
+            # Upsert source node
+            existing = db.fetch_one(
+                "SELECT node_id FROM topology_nodes WHERE node_id = ?", (rel.source,)
+            )
+            if not existing:
+                db.execute(
+                    "INSERT OR IGNORE INTO topology_nodes(node_id, node_type, label, properties_json) VALUES (?, ?, ?, ?)",
+                    (rel.source, "Extracted", rel.source, encode({"origin": "graphrag_extraction"})),
+                )
+                nodes_added += 1
+
+            # Upsert target node
+            existing = db.fetch_one(
+                "SELECT node_id FROM topology_nodes WHERE node_id = ?", (rel.target,)
+            )
+            if not existing:
+                db.execute(
+                    "INSERT OR IGNORE INTO topology_nodes(node_id, node_type, label, properties_json) VALUES (?, ?, ?, ?)",
+                    (rel.target, "Extracted", rel.target, encode({"origin": "graphrag_extraction"})),
+                )
+                nodes_added += 1
+
+            # Insert edge
+            db.execute(
+                "INSERT INTO topology_edges(source_id, target_id, relation, properties_json) VALUES (?, ?, ?, ?)",
+                (rel.source, rel.target, rel.relation_type, encode({"context": rel.context, "origin": "graphrag_extraction"})),
+            )
+            edges_added += 1
+
+        summary = {
+            "nodes_added": nodes_added,
+            "edges_added": edges_added,
+            "total_relationships": len(graph_data.relationships),
+        }
+        db.audit("graphrag_ingestion", summary)
+        logger.info("GraphRAG ingestion: %s", summary)
+        return summary
+
+    # -------------------------------------------------------------------
+    # NL-to-Cypher (existing)
+    # -------------------------------------------------------------------
 
     def nl_to_cypher(self, question: str) -> dict[str, Any]:
         self.seed()

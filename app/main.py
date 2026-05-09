@@ -160,6 +160,32 @@ def topology() -> dict:
     return {"ok": True, "data": graph_service.topology()}
 
 
+@app.get("/api/graph/neighbourhood/{node_id}")
+def graph_neighbourhood(node_id: str, depth: int = 2) -> dict:
+    """Return the k-hop neighbourhood of a node (GraphRAG debug endpoint)."""
+    return {"ok": True, "data": graph_service.get_node_neighbourhood(node_id, depth=min(depth, 4))}
+
+
+@app.post("/api/graph/extract")
+def graph_extract(payload: dict[str, Any] = Body(...)) -> dict:
+    """
+    Extract entities/relationships from unstructured text and ingest into the graph.
+    Accepts: {"text": "...incident description or log..."}
+    """
+    text = payload.get("text", "")
+    if not text:
+        return {"ok": False, "error": "Field 'text' is required"}
+    extracted = graph_service.extract_graph_data(text)
+    ingestion_result = graph_service.ingest_extracted_relationships(extracted)
+    return {
+        "ok": True,
+        "data": {
+            "extracted": extracted.model_dump(),
+            "ingestion": ingestion_result,
+        },
+    }
+
+
 @app.get("/api/visualization/scene")
 def visualization_scene() -> dict:
     return {"ok": True, "data": visualization_service.scene()}

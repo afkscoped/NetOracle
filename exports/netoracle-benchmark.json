@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-09T07:21:25.384654+00:00",
-  "scenarios": 12,
+  "timestamp": "2026-05-09T08:46:00.496170+00:00",
+  "scenarios": 60,
   "metrics": {
-    "roc_auc": 0.688,
+    "roc_auc": 0.78,
     "precision": 1.0,
-    "recall": 0.5,
+    "recall": 0.6,
     "false_positive_rate": 0.0,
     "mttp_minutes": 5,
     "localisation_accuracy": 1.0,
@@ -14,7 +14,7 @@
     "jain_fairness": 0.4571,
     "hopfield_convergence_iterations": 2,
     "hopfield_energy_monotonic": true,
-    "mean_inference_ms": 10.43,
+    "mean_inference_ms": 9.24,
     "conformal_coverage": 0.8997,
     "conformal_q_hat": 0.7714,
     "notears_shd": 0
@@ -56,7 +56,7 @@
     }
   },
   "status": {
-    "roc_auc": "fail",
+    "roc_auc": "pass",
     "false_positive_rate": "research",
     "localisation_accuracy": "research",
     "rca_accuracy": "research",
@@ -67,7 +67,7 @@
   },
   "ablation": {
     "ctgnn_causal_attention": {
-      "auc": 0.688,
+      "auc": 0.78,
       "model": 0.9235757291553631,
       "mttp_minutes": 5
     },
@@ -94,7 +94,7 @@
     "shd_vs_ground_truth": 0
   },
   "benefit_summary": {
-    "prediction_is_useful": false,
+    "prediction_is_useful": true,
     "alert_fatigue_controlled": true,
     "closed_loop_is_safe": true,
     "uncertainty_calibrated": true

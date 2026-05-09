@@ -222,10 +222,18 @@ def rl_policy() -> dict:
 
 @app.post("/api/rl/recommend")
 def rl_recommend(payload: dict[str, Any] = Body(default={})) -> dict:
+    # Pop known keys to avoid duplicate argument errors in service call
+    fault_type = str(payload.pop("fault_type", "congestion"))
+    risk = str(payload.pop("risk", "low"))
+    probability = float(payload.pop("probability", 0.7))
+    conformal_risk_score = float(payload.pop("conformal_risk_score", 0.0))
+    
     return {"ok": True, "data": adaptive_rl_service.recommend(
-        str(payload.get("fault_type", "congestion")),
-        str(payload.get("risk", "low")),
-        float(payload.get("probability", 0.7)),
+        fault_type,
+        risk=risk,
+        probability=probability,
+        conformal_risk_score=conformal_risk_score,
+        **payload
     )}
 
 

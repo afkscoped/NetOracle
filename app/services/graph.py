@@ -1,8 +1,11 @@
+import hashlib
 import json
 import logging
+import math
 import re
-from collections import deque
-from typing import Any, List
+import time
+from collections import defaultdict, deque
+from typing import Any, List, Optional
 
 import requests
 from pydantic import BaseModel, Field
@@ -129,60 +132,195 @@ class GraphService:
         db.audit("fault_localised", context)
         return context
 
-    def get_node_neighbourhood(self, node_id: str, depth: int = 2) -> dict[str, Any]:
-        """
-        Returns the k-hop neighbourhood of a node from the SQLite property graph.
-        Used by GraphRAG to inject topology context into LLM prompts.
-        """
+    # ── Advanced GraphRAG Neighbourhood Retrieval ─────────────────────────
+
+    _NEIGHBOURHOOD_CACHE: dict = {}
+    _CACHE_TTL_SECONDS = 60
+
+    @staticmethod
+    def _cache_key(node_id: str, depth: int) -> str:
+        return hashlib.md5(f"{node_id}:{depth}".encode()).hexdigest()
+
+    EDGE_RELATION_WEIGHTS = {
+        "HOSTS":           1.0,
+        "CONNECTS_TO":     0.9,
+        "DEPENDS_ON":      0.95,
+        "GOVERNS":         0.85,
+        "SERVES":          0.80,
+        "MONITORS":        0.70,
+        "SHARES_RESOURCE": 0.75,
+        "BACKUP_FOR":      0.60,
+    }
+    DEFAULT_EDGE_WEIGHT = 0.50
+
+    @staticmethod
+    def _compute_local_pagerank(edges: list[dict], iterations: int = 10, damping: float = 0.85) -> dict:
+        nodes = set()
+        adjacency = defaultdict(list)
+        for e in edges:
+            nodes.add(e["source"])
+            nodes.add(e["target"])
+            adjacency[e["source"]].append(e["target"])
+
+        n = len(nodes)
+        if n == 0:
+            return {}
+
+        rank = {node: 1.0 / n for node in nodes}
+
+        for _ in range(iterations):
+            new_rank = {}
+            for node in nodes:
+                incoming = [s for s, targets in adjacency.items() if node in targets]
+                score = (1 - damping) / n
+                for src in incoming:
+                    out_degree = len(adjacency[src]) or 1
+                    score += damping * (rank[src] / out_degree)
+                new_rank[node] = score
+            rank = new_rank
+
+        return rank
+
+    @classmethod
+    def _score_path(cls, path_edges: list[dict]) -> float:
+        if not path_edges:
+            return 0.0
+        score = 1.0
+        for edge in path_edges:
+            relation = edge.get("relation", "")
+            weight = cls.EDGE_RELATION_WEIGHTS.get(relation, cls.DEFAULT_EDGE_WEIGHT)
+            score *= weight
+        length_penalty = 1.0 / math.log(len(path_edges) + math.e)
+        return score * length_penalty
+
+    def get_node_neighbourhood_v2(
+        self,
+        node_id: str,
+        depth: int = 2,
+        max_nodes: int = 20,
+        fault_type: Optional[str] = None,
+    ) -> dict:
         self.seed()
-        node_map = {node["node_id"]: node for node in self.nodes()}
-        adjacency = self._adjacency()
+        cache_key = self._cache_key(node_id, depth)
+        cached = self._NEIGHBOURHOOD_CACHE.get(cache_key)
+        if cached and (time.time() - cached["ts"]) < self._CACHE_TTL_SECONDS:
+            return cached["data"]
 
-        visited: set[str] = set()
-        frontier = [node_id]
-        neighbourhood_nodes: list[dict[str, Any]] = []
-        neighbourhood_edges: list[dict[str, Any]] = []
+        visited_nodes = set()
+        all_edges = []
+        all_nodes = {}
+        path_scores = {}
 
-        # Include root node if it exists
-        if node_id in node_map:
-            root = node_map[node_id]
-            neighbourhood_nodes.append({
-                "node_id": root["node_id"],
-                "node_type": root["node_type"],
-                "label": root["label"],
-                "hop": 0,
-            })
+        frontier = [(node_id, [], 0)]
 
-        for hop in range(1, depth + 1):
-            next_frontier: list[str] = []
-            for nid in frontier:
-                if nid in visited:
-                    continue
-                visited.add(nid)
-                for neighbour_id, relation in adjacency.get(nid, []):
-                    neighbourhood_edges.append({
-                        "source": nid,
-                        "target": neighbour_id,
-                        "relation": relation,
-                    })
-                    if neighbour_id not in visited and neighbour_id not in set(frontier):
-                        next_frontier.append(neighbour_id)
-                        if neighbour_id in node_map:
-                            meta = node_map[neighbour_id]
-                            neighbourhood_nodes.append({
-                                "node_id": meta["node_id"],
-                                "node_type": meta["node_type"],
-                                "label": meta["label"],
-                                "hop": hop,
-                            })
-            frontier = next_frontier
+        while frontier:
+            current, path, current_depth = frontier.pop(0)
+            if current in visited_nodes or current_depth > depth:
+                continue
+            visited_nodes.add(current)
 
-        return {
-            "root": node_id,
+            rows = db.fetch_all(
+                "SELECT target_id, relation FROM topology_edges WHERE source_id = ?",
+                (current,)
+            )
+
+            for row in rows:
+                target_id = row["target_id"]
+                relation = row["relation"]
+                edge = {"source": current, "target": target_id, "relation": relation}
+                edge_weight = self.EDGE_RELATION_WEIGHTS.get(relation, self.DEFAULT_EDGE_WEIGHT)
+                edge["weight"] = edge_weight
+                all_edges.append(edge)
+
+                new_path = path + [edge]
+                path_score = self._score_path(new_path)
+                if target_id not in path_scores or path_scores[target_id] < path_score:
+                    path_scores[target_id] = path_score
+
+                if target_id not in all_nodes:
+                    meta = db.fetch_one(
+                        "SELECT node_type, label FROM topology_nodes WHERE node_id = ?",
+                        (target_id,)
+                    )
+                    if meta:
+                        all_nodes[target_id] = {
+                            "node_id": target_id,
+                            "node_type": meta["node_type"],
+                            "label": meta["label"],
+                        }
+
+                frontier.append((target_id, new_path, current_depth + 1))
+
+        if node_id not in all_nodes:
+            meta = db.fetch_one(
+                "SELECT node_type, label FROM topology_nodes WHERE node_id = ?",
+                (node_id,)
+            )
+            if meta:
+                all_nodes[node_id] = {
+                    "node_id": node_id,
+                    "node_type": meta["node_type"],
+                    "label": meta["label"],
+                }
+
+        centrality = self._compute_local_pagerank(all_edges)
+
+        for node_id_key in all_nodes:
+            c = centrality.get(node_id_key, 0.0)
+            p = path_scores.get(node_id_key, 0.0)
+            all_nodes[node_id_key]["relevance_score"] = round(0.6 * c + 0.4 * p, 4)
+
+        ranked_nodes = sorted(
+            all_nodes.values(),
+            key=lambda n: n["relevance_score"],
+            reverse=True
+        )[:max_nodes]
+
+        ranked_node_ids = {n["node_id"] for n in ranked_nodes}
+        filtered_edges = [
+            e for e in all_edges
+            if e["source"] in ranked_node_ids or e["target"] in ranked_node_ids
+        ]
+
+        result = {
+            "anchor_node": node_id,
             "depth": depth,
-            "nodes": neighbourhood_nodes,
-            "edges": neighbourhood_edges,
+            "nodes": ranked_nodes,
+            "edges": filtered_edges,
+            "centrality": {k: round(v, 4) for k, v in centrality.items()},
+            "top_node": ranked_nodes[0]["node_id"] if ranked_nodes else None,
+            "fault_type_context": fault_type,
         }
+
+        self._NEIGHBOURHOOD_CACHE[cache_key] = {"ts": time.time(), "data": result}
+        return result
+
+    @staticmethod
+    def serialise_graphrag_context(neighbourhood: dict, token_budget: int = 600) -> str:
+        lines = []
+        lines.append(f"## Graph Context — Anchor: {neighbourhood['anchor_node']} (depth={neighbourhood['depth']})")
+
+        lines.append("\n### Top Relevant Nodes (ranked by centrality + path relevance):")
+        for node in neighbourhood["nodes"][:10]:
+            lines.append(
+                f"  [{node['node_type']}] {node['node_id']} | label={node.get('label','?')} | relevance={node.get('relevance_score', 0)}"
+            )
+
+        lines.append("\n### Key Topology Edges:")
+        seen_pairs = set()
+        for edge in neighbourhood["edges"][:15]:
+            pair = (edge["source"], edge["target"])
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                lines.append(f"  {edge['source']} --[{edge['relation']} w={edge.get('weight', 0.5)}]--> {edge['target']}")
+
+        context = "\n".join(lines)
+
+        char_budget = token_budget * 4
+        if len(context) > char_budget:
+            context = context[:char_budget] + "\n  ... [truncated to token budget]"
+
+        return context
 
     # -------------------------------------------------------------------
     # GraphRAG: LLM-based entity / relationship extraction

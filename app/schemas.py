@@ -15,12 +15,16 @@ class MetricFrame(BaseModel):
 class FaultInjectionRequest(BaseModel):
     slice_id: str = "slice_1"
     node_id: str = "upf_1"
-    fault_type: str = Field(default="congestion", pattern="^(congestion|cpu_overload|packet_loss|vnf_degradation|latency_spike)$")
+    # Relaxed regex to allow domain-specific fault types like prb_congestion, upf_overload, etc.
+    fault_type: str = Field(default="congestion")
     severity: float = Field(default=0.85, ge=0.1, le=1.0)
 
 
 class NaturalLanguageQuery(BaseModel):
-    question: str
+    question: str = Field(alias="query")
+
+    class Config:
+        populate_by_name = True
 
 
 class DemoRunRequest(BaseModel):

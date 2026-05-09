@@ -1,14 +1,22 @@
 import hashlib
 import json
+import logging
 import math
+import asyncio
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 import requests
+from pydantic import BaseModel, Field
 
 from app.database import db, decode, encode
+from app.services.graph import graph_service
 from app.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 POSTMORTEMS = [
@@ -41,6 +49,338 @@ def cosine(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
+def build_graphrag_context(node_id: str, vector_hits: list, fault_type: str = None) -> str:
+    """
+    Upgraded GraphRAG fusion:
+    - Vector hits are re-ranked by recency + similarity
+    - Graph context is ranked by centrality + path relevance
+    - Both are compressed to a token budget before injection
+    """
+    # Vector context — re-rank by similarity score if available, take top 5
+    sorted_hits = sorted(vector_hits, key=lambda h: h.get("score", 0), reverse=True)
+    vector_lines = []
+    for hit in sorted_hits[:5]:
+        score_label = f"(sim={hit['score']:.2f})" if "score" in hit else ""
+        vector_lines.append(f"  - {hit.get('summary', hit.get('title', 'Unknown'))} {score_label}")
+    vector_context = "\n".join(vector_lines) or "  No past incidents found."
+
+    # Graph context — full ranked neighbourhood
+    neighbourhood = graph_service.get_node_neighbourhood_v2(
+        node_id=node_id,
+        depth=2,
+        max_nodes=20,
+        fault_type=fault_type,
+    )
+    graph_context = graph_service.serialise_graphrag_context(neighbourhood, token_budget=500)
+
+    return f"""
+## Past Incident Memory (Vector RAG — top {len(sorted_hits[:5])} hits)
+{vector_context}
+
+{graph_context}
+
+## Structural Summary
+  Top central node in subgraph: {neighbourhood.get('top_node', 'N/A')}
+  Total neighbours retrieved: {len(neighbourhood['nodes'])}
+  Total edges in subgraph: {len(neighbourhood['edges'])}
+"""
+
+
+# ── Fault Embedding (lightweight, no external model needed) ───────────────
+
+FAULT_EMBEDDING_VOCABULARY = {
+    # Radio domain
+    "prb": "radio", "interference": "radio", "handover": "radio",
+    "rsrp": "radio", "sinr": "radio", "coverage": "radio", "gnodeb": "radio",
+    "beam": "radio", "rrh": "radio", "du": "radio", "ru": "radio",
+    # Core domain
+    "upf": "core", "smf": "core", "amf": "core", "ausf": "core",
+    "slice": "core", "qos": "core", "session": "core", "pdu": "core",
+    "nrf": "core", "udm": "core", "nssf": "core",
+    # Transport domain
+    "latency": "transport", "packet_loss": "transport", "link": "transport",
+    "routing": "transport", "backhaul": "transport", "fronthaul": "transport",
+    "jitter": "transport", "throughput": "transport", "bandwidth": "transport",
+    # Security domain
+    "intrusion": "security", "anomaly": "security", "auth": "security",
+    "dos": "security", "flood": "security", "breach": "security",
+}
+
+def _embed_fault(fault_type: str, telemetry_keys: list = None) -> dict:
+    """
+    Creates a domain score vector from fault text tokens.
+    Returns {domain: score} — no external model required.
+    """
+    tokens = (fault_type or "").lower().replace("_", " ").split()
+    if telemetry_keys:
+        tokens += [k.lower() for k in telemetry_keys]
+
+    domain_scores = {"radio": 0.0, "core": 0.0, "transport": 0.0, "security": 0.0}
+    for token in tokens:
+        domain = FAULT_EMBEDDING_VOCABULARY.get(token)
+        if domain:
+            domain_scores[domain] += 1.0
+
+    # L2 normalise
+    magnitude = math.sqrt(sum(v**2 for v in domain_scores.values())) or 1.0
+    return {k: round(v / magnitude, 4) for k, v in domain_scores.items()}
+
+def _cosine_similarity(vec_a: dict, vec_b: dict) -> float:
+    dot = sum(vec_a.get(k, 0) * vec_b.get(k, 0) for k in vec_a)
+    mag_a = math.sqrt(sum(v**2 for v in vec_a.values())) or 1.0
+    mag_b = math.sqrt(sum(v**2 for v in vec_b.values())) or 1.0
+    return dot / (mag_a * mag_b)
+
+
+# ── Specialist Persona Registry ───────────────────────────────────────────
+
+SPECIALIST_REGISTRY = {
+    "radio": {
+        "name": "Radio Access Network Specialist",
+        "domain_vector": {"radio": 1.0, "core": 0.0, "transport": 0.1, "security": 0.0},
+        "system_prompt": (
+            "You are a senior Radio Access Network (RAN) specialist with expertise in "
+            "5G NR, gNodeBs, PRB utilisation, beamforming, SINR, interference mitigation, "
+            "and handover optimisation. Diagnose faults rigorously. "
+            "Output JSON: {root_cause, confidence, affected_components, action, domain}."
+        ),
+        "weight": 1.0,
+    },
+    "core": {
+        "name": "5G Core Network Specialist",
+        "domain_vector": {"radio": 0.0, "core": 1.0, "transport": 0.1, "security": 0.0},
+        "system_prompt": (
+            "You are a senior 5G Core Network specialist with expertise in UPF, SMF, AMF, "
+            "AUSF, NRF, network slicing, QoS enforcement, and PDU session management. "
+            "Diagnose faults rigorously. "
+            "Output JSON: {root_cause, confidence, affected_components, action, domain}."
+        ),
+        "weight": 1.0,
+    },
+    "transport": {
+        "name": "Transport & Backhaul Specialist",
+        "domain_vector": {"radio": 0.1, "core": 0.0, "transport": 1.0, "security": 0.0},
+        "system_prompt": (
+            "You are a senior Transport and Backhaul specialist with expertise in "
+            "fronthaul/midhaul/backhaul latency, packet loss, link failures, and routing. "
+            "Output JSON: {root_cause, confidence, affected_components, action, domain}."
+        ),
+        "weight": 1.0,
+    },
+    "security": {
+        "name": "Network Security Specialist",
+        "domain_vector": {"radio": 0.0, "core": 0.1, "transport": 0.0, "security": 1.0},
+        "system_prompt": (
+            "You are a senior Network Security specialist. Diagnose DDoS, intrusion, "
+            "authentication anomalies, and abnormal traffic patterns in 5G networks. "
+            "Output JSON: {root_cause, confidence, affected_components, action, domain}."
+        ),
+        "weight": 1.0,
+    },
+}
+
+
+# ── Embedding-Based MoE Router ────────────────────────────────────────────
+
+def route_to_specialists(
+    fault_type: str,
+    telemetry: dict = None,
+    top_k: int = 2,
+    min_similarity: float = 0.15,
+) -> list[dict]:
+    """
+    Upgraded router: uses cosine similarity between fault embedding
+    and specialist domain vectors to select top_k specialists.
+    Always returns at least 1 specialist.
+    """
+    telemetry_keys = list(telemetry.keys()) if telemetry else []
+    fault_vec = _embed_fault(fault_type, telemetry_keys)
+
+    scored = []
+    for key, persona in SPECIALIST_REGISTRY.items():
+        sim = _cosine_similarity(fault_vec, persona["domain_vector"])
+        scored.append((sim, key, persona))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Take top_k above minimum similarity threshold
+    selected = [
+        {**persona, "routing_score": round(sim, 4), "specialist_key": key}
+        for sim, key, persona in scored[:top_k]
+        if sim >= min_similarity
+    ]
+
+    # Always guarantee at least one specialist
+    if not selected:
+        sim, key, persona = scored[0]
+        selected = [{**persona, "routing_score": round(sim, 4), "specialist_key": key}]
+
+    logger.info(f"[MoE Router] Fault='{fault_type}' → {[s['name'] for s in selected]}")
+    return selected
+
+
+# ── Multi-Specialist Debate Protocol ─────────────────────────────────────
+
+def call_llm(prompt: str) -> dict:
+    """Calls the local Ollama model (or configured model)."""
+    settings = get_settings()
+    model = settings.model_names[0] if settings.model_names else "phi3:mini"
+    try:
+        response = requests.post(
+            f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        text = response.json().get("response", "{}")
+        return json.loads(text)
+    except Exception as e:
+        logger.error(f"call_llm error: {e}")
+        return {}
+
+
+def _call_specialist_llm(specialist: dict, prompt: str) -> dict:
+    """
+    Calls the LLM with a specialist's system prompt and parses the JSON response.
+    Falls back to a structured heuristic if the LLM is unavailable.
+    """
+    full_prompt = f"{specialist['system_prompt']}\n\n{prompt}"
+    try:
+        raw = call_llm(full_prompt)
+        text = raw.get("text", raw) if isinstance(raw, dict) else str(raw)
+        if isinstance(text, str):
+            text = text.strip().lstrip("```json").rstrip("```").strip()
+            if text:
+                parsed = json.loads(text)
+            else:
+                parsed = raw if isinstance(raw, dict) else {}
+        else:
+            parsed = text
+            
+        parsed["specialist"] = specialist["name"]
+        parsed["routing_score"] = specialist.get("routing_score", 0.0)
+        return parsed
+    except Exception as e:
+        # Structured fallback
+        return {
+            "specialist": specialist["name"],
+            "root_cause": f"LLM unavailable — heuristic: possible {specialist.get('specialist_key', 'unknown')} domain fault",
+            "confidence": 0.40,
+            "affected_components": [],
+            "action": "escalate_to_human",
+            "domain": specialist.get("specialist_key", "unknown"),
+            "routing_score": specialist.get("routing_score", 0.0),
+            "error": str(e),
+        }
+
+
+def multi_specialist_debate(
+    specialists: list[dict],
+    prompt: str,
+    debate_rounds: int = 1,
+) -> dict:
+    """
+    Multi-round debate protocol:
+    Round 1: Each specialist independently diagnoses.
+    Round 2: Each specialist sees others' conclusions and can revise.
+    Final:    Confidence-weighted ensemble verdict.
+    """
+    # Round 1 — independent diagnosis
+    round1_results = []
+    with ThreadPoolExecutor(max_workers=len(specialists)) as executor:
+        futures = {executor.submit(_call_specialist_llm, s, prompt): s for s in specialists}
+        for future in futures:
+            try:
+                round1_results.append(future.result(timeout=45))
+            except Exception as e:
+                round1_results.append({"specialist": futures[future]["name"], "confidence": 0.0, "error": str(e)})
+
+    if debate_rounds < 2 or len(specialists) < 2:
+        return _ensemble_verdict(round1_results)
+
+    # Round 2 — each specialist sees others' Round 1 verdicts
+    peer_summary = "\n".join([
+        f"  [{r.get('specialist', 'Unknown')}]: root_cause='{r.get('root_cause','?')}', "
+        f"confidence={r.get('confidence', 0):.2f}, action='{r.get('action','?')}'"
+        for r in round1_results
+    ])
+
+    debate_prompt = (
+        f"{prompt}\n\n"
+        f"## Peer Specialist Round 1 Verdicts:\n{peer_summary}\n\n"
+        "Review the above peer assessments. Do you agree, partially agree, or disagree? "
+        "Provide your revised diagnosis. Output JSON as before."
+    )
+
+    round2_results = []
+    with ThreadPoolExecutor(max_workers=len(specialists)) as executor:
+        futures = {executor.submit(_call_specialist_llm, s, debate_prompt): s for s in specialists}
+        for future in futures:
+            try:
+                round2_results.append(future.result(timeout=45))
+            except Exception:
+                round2_results.append(round1_results[0])  # fallback to round 1
+
+    return _ensemble_verdict(round2_results, round1_results)
+
+
+def _ensemble_verdict(
+    results: list[dict],
+    round1: list[dict] = None,
+) -> dict:
+    """
+    Confidence-weighted ensemble: routing_score * confidence determines each specialist's weight.
+    Aggregates root cause by majority-weighted vote.
+    """
+    if not results:
+        return {"error": "No specialist results", "confidence": 0.0}
+
+    total_weight = 0.0
+    weighted_confidence = 0.0
+    root_cause_votes = {}
+    action_votes = {}
+    all_components = []
+
+    for r in results:
+        conf = float(r.get("confidence", 0.5))
+        routing = float(r.get("routing_score", 0.5))
+        weight = conf * routing
+        total_weight += weight
+        weighted_confidence += weight * conf
+
+        cause = r.get("root_cause", "unknown")
+        root_cause_votes[cause] = root_cause_votes.get(cause, 0) + weight
+
+        action = r.get("action", "escalate_to_human")
+        action_votes[action] = action_votes.get(action, 0) + weight
+
+        comp = r.get("affected_components", [])
+        if isinstance(comp, list):
+            all_components.extend(comp)
+
+    if total_weight == 0:
+        total_weight = 1.0
+
+    top_cause = max(root_cause_votes, key=root_cause_votes.get) if root_cause_votes else "unknown"
+    top_action = max(action_votes, key=action_votes.get) if action_votes else "escalate_to_human"
+    ensemble_confidence = weighted_confidence / total_weight
+
+    # Consensus score: how strongly do specialists agree?
+    consensus = max(root_cause_votes.values()) / total_weight if root_cause_votes else 0.0
+
+    return {
+        "root_cause": top_cause,
+        "confidence": round(ensemble_confidence, 3),
+        "consensus_score": round(consensus, 3),
+        "action": top_action,
+        "affected_components": list(set(all_components)),
+        "specialists_consulted": [r.get("specialist") for r in results],
+        "individual_verdicts": results,
+        "round1_verdicts": round1,
+        "ensemble_method": "confidence_routing_weighted_vote",
+    }
+
+
 class RagLlmService:
     def seed(self) -> None:
         if db.fetch_one("SELECT incident_id FROM incidents LIMIT 1"):
@@ -62,91 +402,71 @@ class RagLlmService:
             scored.append({"incident_id": row["incident_id"], "title": row["title"], "fault_type": row["fault_type"], "body": row["body"], "score": round(score, 3)})
         return sorted(scored, key=lambda item: item["score"], reverse=True)[:limit]
 
-    def _ollama_vote(self, model: str, prompt: str) -> dict[str, Any] | None:
-        settings = get_settings()
-        try:
-            response = requests.post(
-                f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
-                timeout=18,
-            )
-            response.raise_for_status()
-            text = response.json().get("response", "{}")
-            data = json.loads(text)
-            if "root_cause" in data:
-                return data
-        except Exception:
-            return None
-        return None
+    def diagnose(self, alert: dict[str, Any], graph_context: dict[str, Any], debate_rounds: int = 2) -> dict[str, Any]:
+        """
+        Full pipeline:
+        1. GraphRAG context fusion
+        2. Embedding-based MoE routing (top-2 specialists)
+        3. Multi-round specialist debate
+        4. Confidence-weighted ensemble verdict
+        """
+        node_id = alert.get("node_id", "")
+        fault_type = alert.get("fault_type", "unknown")
+        
+        # We can extract telemetry from the alert's features if not explicitly present
+        telemetry = alert.get("telemetry", {})
+        if not telemetry and "top_features" in alert:
+            telemetry = {f: 1.0 for f in alert["top_features"]}
 
-    def _fallback_votes(self, alert: dict[str, Any], context: dict[str, Any], retrieved: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        feature_text = " ".join(alert.get("top_features", []))
-        fault_type = alert.get("fault_type", "congestion")
-        root_map = {
-            "congestion": "UPF or radio-path congestion caused by sustained utilisation pressure",
-            "cpu_overload": "Compute saturation in the affected network function is increasing queueing delay",
-            "packet_loss": "Packet loss is propagating through the slice and reducing throughput",
-            "vnf_degradation": "The VNF is degrading under memory or compute pressure",
-            "latency_spike": "A link or edge-router queue is creating a latency spike",
-        }
-        votes = []
-        labels = [fault_type, retrieved[0]["fault_type"] if retrieved else fault_type, fault_type if "latency" in feature_text else retrieved[-1]["fault_type"] if retrieved else fault_type]
-        for idx, label in enumerate(labels):
-            votes.append({
-                "model": ["Causal-Mistral-Agent", "Graph-Phi-Agent", "RAG-Llama-Agent"][idx],
-                "root_cause": root_map.get(label, root_map[fault_type]),
-                "fault_type": label,
-                "confidence": round(0.68 + idx * 0.05 + min(alert.get("fault_probability", 0.6), 0.3) / 3, 2),
-            })
-        return votes
+        retrieved = self.retrieve(f"{fault_type} {' '.join(alert.get('top_features', []))}")
 
-    def diagnose(self, alert: dict[str, Any], graph_context: dict[str, Any]) -> dict[str, Any]:
-        retrieved = self.retrieve(" ".join([alert.get("fault_type", ""), " ".join(alert.get("top_features", []))]))
-        prompt = json.dumps({
-            "task": "Return JSON with root_cause, fault_type, confidence, recommended_action, risk.",
-            "alert": alert,
-            "graph_context": graph_context,
-            "similar_incidents": retrieved,
-        })
-        votes = []
-        for model in get_settings().model_names:
-            vote = self._ollama_vote(model, prompt)
-            if vote:
-                vote["model"] = model
-                votes.append(vote)
-        if not votes:
-            votes = self._fallback_votes(alert, graph_context, retrieved)
-        weighted = Counter()
-        total_confidence = 0.0
-        for vote in votes:
-            confidence = float(vote.get("confidence", 0.5))
-            weighted[str(vote.get("fault_type", alert["fault_type"]))] += confidence
-            total_confidence += confidence
-        final_fault = weighted.most_common(1)[0][0]
-        confidence = min(0.96, weighted[final_fault] / max(total_confidence, 1e-6) + 0.22)
-        actions = {
-            "congestion": "scale_vnf",
-            "cpu_overload": "scale_vnf",
-            "packet_loss": "reallocate_channel",
-            "vnf_degradation": "scale_vnf",
-            "latency_spike": "push_flow_rule",
-        }
+        # 1. GraphRAG context
+        context_str = build_graphrag_context(node_id, retrieved, fault_type)
+
+        # Build diagnostic prompt
+        prompt = f"""
+Node Under Diagnosis: {node_id}
+Fault Type: {fault_type}
+Telemetry: {json.dumps(telemetry, indent=2)}
+
+{context_str}
+
+Provide a rigorous diagnosis. Be specific about root cause and required action.
+Output ONLY valid JSON: {{"root_cause": "...", "confidence": 0.0, "affected_components": [], "action": "...", "domain": "..."}}
+"""
+
+        # 2. Route to top-2 specialists
+        specialists = route_to_specialists(fault_type, telemetry, top_k=2)
+
+        # 3 & 4. Multi-round debate & ensemble verdict
+        verdict = multi_specialist_debate(specialists, prompt, debate_rounds=debate_rounds)
+        
+        confidence = verdict.get("confidence", 0.5)
+        root_cause = verdict.get("root_cause", "Network degradation detected")
+        action = verdict.get("action", "escalate")
+
         risk = "low" if confidence >= get_settings().confidence_threshold and alert.get("fault_probability", 0) < 0.92 else "medium"
-        root_cause = max(votes, key=lambda item: float(item.get("confidence", 0))).get("root_cause", "Network degradation detected")
+
         diagnosis = {
-            "alert_id": alert["alert_id"],
+            "alert_id": alert.get("alert_id", "unknown"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "root_cause": root_cause,
             "confidence": round(confidence, 3),
-            "evidence": {
-                "graph_path": [node["node_id"] for node in graph_context.get("affected_path", [])],
-                "similar_incidents": retrieved,
-                "llm_votes": votes,
-                "ensemble_method": "confidence-weighted multi-agent vote with graph-grounded RAG",
+            "moe_routing": {
+                "experts": [s.get("name") for s in specialists],
+                "verdict_consensus": verdict.get("consensus_score", 0.0),
             },
-            "recommended_action": actions.get(final_fault, "escalate"),
+            "evidence": {
+                "alert": alert,
+                "graphrag_context": context_str,
+                "similar_incidents": retrieved,
+                "ensemble_method": "multi_specialist_debate",
+                "verdict": verdict,
+            },
+            "recommended_action": action,
             "risk": risk,
         }
+        
         db.execute(
             "INSERT OR REPLACE INTO diagnoses(alert_id, timestamp, root_cause, confidence, evidence_json, recommended_action, risk) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (diagnosis["alert_id"], diagnosis["timestamp"], diagnosis["root_cause"], diagnosis["confidence"], encode(diagnosis["evidence"]), diagnosis["recommended_action"], diagnosis["risk"]),

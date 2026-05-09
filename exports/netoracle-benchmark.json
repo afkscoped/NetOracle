@@ -1,4 +1,102 @@
 {
-  "kind": "benchmark",
-  "message": "No benchmark report exists yet."
+  "timestamp": "2026-05-09T10:18:35.133640+00:00",
+  "scenarios": 60,
+  "metrics": {
+    "roc_auc": 0.78,
+    "precision": 1.0,
+    "recall": 0.6,
+    "false_positive_rate": 0.0,
+    "mttp_minutes": 5,
+    "localisation_accuracy": 1.0,
+    "rca_accuracy": 1.0,
+    "safe_remediation_rate": 1.0,
+    "audit_completeness": 1.0,
+    "jain_fairness": 0.4571,
+    "hopfield_convergence_iterations": 2,
+    "hopfield_energy_monotonic": true,
+    "mean_inference_ms": 8.44,
+    "conformal_coverage": 0.8997,
+    "conformal_q_hat": 0.7714,
+    "notears_shd": 0
+  },
+  "thresholds": {
+    "roc_auc": {
+      "pass": 0.75,
+      "research": 0.85
+    },
+    "false_positive_rate": {
+      "pass": 0.25,
+      "research": 0.15,
+      "lower_is_better": true
+    },
+    "localisation_accuracy": {
+      "pass": 0.75,
+      "research": 0.85
+    },
+    "rca_accuracy": {
+      "pass": 0.65,
+      "research": 0.75
+    },
+    "safe_remediation_rate": {
+      "pass": 0.9,
+      "research": 0.95
+    },
+    "audit_completeness": {
+      "pass": 1.0,
+      "research": 1.0
+    },
+    "jain_fairness": {
+      "pass": 0.4,
+      "research": 0.7
+    },
+    "hopfield_convergence_iterations": {
+      "pass": 75,
+      "research": 50,
+      "lower_is_better": true
+    }
+  },
+  "status": {
+    "roc_auc": "pass",
+    "false_positive_rate": "research",
+    "localisation_accuracy": "research",
+    "rca_accuracy": "research",
+    "safe_remediation_rate": "research",
+    "audit_completeness": "research",
+    "jain_fairness": "pass",
+    "hopfield_convergence_iterations": "research"
+  },
+  "ablation": {
+    "ctgnn_causal_attention": {
+      "auc": 0.78,
+      "model": 0.9235757291553631,
+      "mttp_minutes": 5
+    },
+    "heuristic_sigmoid_baseline": {
+      "auc": 0.72,
+      "model": "hand-tuned weighted sigmoid",
+      "mttp_minutes": 0
+    },
+    "random_baseline": {
+      "auc": 0.5,
+      "model": "uniform random",
+      "mttp_minutes": 0
+    }
+  },
+  "conformal": {
+    "calibrated": true,
+    "coverage": 0.8997,
+    "q_hat": 0.7714,
+    "mean_interval_width": 1.5428
+  },
+  "notears": {
+    "algorithm": "federated causal edge voting with confidence promotion",
+    "global_edges": 6,
+    "shd_vs_ground_truth": 0
+  },
+  "benefit_summary": {
+    "prediction_is_useful": true,
+    "alert_fatigue_controlled": true,
+    "closed_loop_is_safe": true,
+    "uncertainty_calibrated": true
+  }
 }

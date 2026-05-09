@@ -11,8 +11,10 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 sceneEl.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+window.__THREE_SCENE__ = scene;
 scene.fog = new THREE.FogExp2(0x020617, 0.018);
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
+window.__THREE_CAMERA__ = camera;
 camera.position.set(0, 46, 86);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -70,6 +72,7 @@ function drawScene(data) {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(pos);
     mesh.userData = node;
+    mesh.name = node.id;
     nodeMeshes.push(mesh);
     nodeGroup.add(mesh);
     const halo = new THREE.Mesh(new THREE.SphereGeometry(2.5 + risk * 3.5, 32, 20), new THREE.MeshBasicMaterial({ color: risk >= Number(threshold.value) ? 0xfb7185 : 0x67e8f9, transparent: true, opacity: 0.06 + risk * 0.16 }));

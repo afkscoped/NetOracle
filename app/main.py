@@ -1,10 +1,16 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
+import time
 from typing import Any
 
 from fastapi import Body, FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
+import mimetypes
+
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 from app.database import db
 from app.schemas import DemoRunRequest, FaultInjectionRequest, NaturalLanguageQuery
@@ -24,17 +30,21 @@ from app.services.wireless import wireless_optimizer_service
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="NetOracle", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    graph_service.seed()
+    rag_llm_service.seed()
+    telemetry_service.warm_start(24)
+    yield
+    # Shutdown logic (none needed currently)
+
+app = FastAPI(title="NetOracle", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 Instrumentator().instrument(app).expose(app)
 
 
-@app.on_event("startup")
-def startup() -> None:
-    graph_service.seed()
-    rag_llm_service.seed()
-    telemetry_service.warm_start(24)
 
 
 @app.get("/")
@@ -113,10 +123,24 @@ def inject_fault(request: FaultInjectionRequest) -> dict:
     fault = request.model_dump()
     frames = telemetry_service.generate_tick(fault)
     alert = intelligence_service.predict_latest()
+    
     graph_context = graph_service.localise(alert) if alert else None
     diagnosis = rag_llm_service.diagnose(alert, graph_context) if alert and graph_context else None
+    if diagnosis:
+        diagnosis["node_id"] = alert.get("node_id") if alert else None
+        
     remediation = remediation_service.decide_and_execute(diagnosis) if diagnosis else None
-    return {"ok": True, "data": {"frames": frames, "alert": alert, "graph_context": graph_context, "diagnosis": diagnosis, "remediation": remediation}}
+    
+    return {
+        "ok": True, 
+        "data": {
+            "frames": frames, 
+            "alert": alert, 
+            "graph_context": graph_context, 
+            "diagnosis": diagnosis, 
+            "remediation": remediation
+        }
+    }
 
 
 @app.post("/api/demo/run")
@@ -133,8 +157,8 @@ def run_demo(request: DemoRunRequest) -> dict:
     alert = intelligence_service.predict_latest()
     if not alert:
         alert = {
-            "alert_id": "manual_low_signal",
-            "timestamp": frames[0]["timestamp"],
+            "alert_id": f"manual_{int(time.time())}",
+            "timestamp": frames[-1]["timestamp"],
             "slice_id": request.slice_id,
             "node_id": request.node_id,
             "fault_type": request.fault_type,
@@ -144,9 +168,14 @@ def run_demo(request: DemoRunRequest) -> dict:
             "causal_edges_used": [],
             "status": "open",
         }
+    # Ensure diagnosis and remediation run for ALL alerts (predicted or manual fallback)
     graph_context = graph_service.localise(alert)
     diagnosis = rag_llm_service.diagnose(alert, graph_context)
-    remediation = remediation_service.decide_and_execute(diagnosis)
+    if diagnosis:
+        diagnosis["node_id"] = alert.get("node_id") # Explicitly propagate node_id
+        
+    remediation = remediation_service.decide_and_execute(diagnosis) if diagnosis else None
+    
     return {"ok": True, "data": {"frames": frames, "alert": alert, "graph_context": graph_context, "diagnosis": diagnosis, "remediation": remediation}}
 
 
@@ -158,6 +187,32 @@ def causal_graph() -> dict:
 @app.get("/api/topology")
 def topology() -> dict:
     return {"ok": True, "data": graph_service.topology()}
+
+
+@app.get("/api/graph/neighbourhood/{node_id}")
+def graph_neighbourhood(node_id: str, depth: int = 2) -> dict:
+    """Return the k-hop neighbourhood of a node (GraphRAG debug endpoint)."""
+    return {"ok": True, "data": graph_service.get_node_neighbourhood(node_id, depth=min(depth, 4))}
+
+
+@app.post("/api/graph/extract")
+def graph_extract(payload: dict[str, Any] = Body(...)) -> dict:
+    """
+    Extract entities/relationships from unstructured text and ingest into the graph.
+    Accepts: {"text": "...incident description or log..."}
+    """
+    text = payload.get("text", "")
+    if not text:
+        return {"ok": False, "error": "Field 'text' is required"}
+    extracted = graph_service.extract_graph_data(text)
+    ingestion_result = graph_service.ingest_extracted_relationships(extracted)
+    return {
+        "ok": True,
+        "data": {
+            "extracted": extracted.model_dump(),
+            "ingestion": ingestion_result,
+        },
+    }
 
 
 @app.get("/api/visualization/scene")
@@ -192,10 +247,18 @@ def rl_policy() -> dict:
 
 @app.post("/api/rl/recommend")
 def rl_recommend(payload: dict[str, Any] = Body(default={})) -> dict:
+    # Pop known keys to avoid duplicate argument errors in service call
+    fault_type = str(payload.pop("fault_type", "congestion"))
+    risk = str(payload.pop("risk", "low"))
+    probability = float(payload.pop("probability", 0.7))
+    conformal_risk_score = float(payload.pop("conformal_risk_score", 0.0))
+    
     return {"ok": True, "data": adaptive_rl_service.recommend(
-        str(payload.get("fault_type", "congestion")),
-        str(payload.get("risk", "low")),
-        float(payload.get("probability", 0.7)),
+        fault_type,
+        risk=risk,
+        probability=probability,
+        conformal_risk_score=conformal_risk_score,
+        **payload
     )}
 
 
@@ -205,6 +268,16 @@ def rl_update(payload: dict[str, Any] = Body(default={})) -> dict:
         str(payload.get("state", "congestion:low:medium")),
         str(payload.get("action", "scale_vnf")),
         float(payload.get("reward", 0.0)),
+        cost=float(payload.get("cost", 0.0)),
+    )}
+
+
+@app.post("/api/rl/train-episode")
+def rl_train_episode(payload: dict[str, Any] = Body(default={})) -> dict:
+    """Run simulated CMDP training episodes to improve the safety-constrained policy."""
+    return {"ok": True, "data": adaptive_rl_service.train_episode(
+        episodes=int(payload.get("episodes", 5)),
+        max_steps=int(payload.get("max_steps", 15)),
     )}
 
 

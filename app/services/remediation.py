@@ -27,12 +27,18 @@ class RemediationService:
         top_features = alert.get("top_features", [])
         traffic_load = 90.0 if "prb_utilization" in top_features or "cpu" in top_features else 50.0
 
+        # Robust node_id extraction: check alert evidence, then diagnosis fields
+        node_id = alert.get("node_id") or diagnosis.get("node_id") or "unknown"
+        if node_id == "unknown" and "affected_components" in diagnosis and diagnosis["affected_components"]:
+            node_id = diagnosis["affected_components"][0]
+            
         rl_recommendation = adaptive_rl_service.recommend(
             fault_type=fault_type, 
             risk=risk, 
             probability=alert.get("fault_probability", 0.7),
             conformal_risk_score=conformal_risk_score,
-            traffic_load=traffic_load
+            traffic_load=traffic_load,
+            node_id=node_id
         )
         
         if rl_recommendation["action"] != "escalate_to_human":

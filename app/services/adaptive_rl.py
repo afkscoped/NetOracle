@@ -205,7 +205,7 @@ class MultiConstraintCMDP:
                 "lockdown": True,
                 "constraints": {},
             }
-            self._audit_log.append({**decision, "ts": time.time()})
+            self._audit_log.append({**decision, "context": context, "ts": time.time()})
             return decision
 
         values = self._get_action_constraint_values(action, context)
@@ -251,6 +251,7 @@ class MultiConstraintCMDP:
             "ts": time.time(),
         }
 
+        decision["context"] = context
         self._audit_log.append(decision)
         return decision
 
@@ -420,6 +421,8 @@ def recommend_action_cmdp(context: dict, service: AdaptiveRLService = adaptive_r
         "violated_constraints": safety_result.get("violated_constraints", []),
         "escalate": not safety_result["approved"],
         "lockdown": safety_result.get("lockdown", False),
+        "node_id": context.get("node_id", "unknown"),
+        "context": context
     }
     
     db.audit("rl_recommendation", payload)

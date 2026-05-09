@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 from typing import Any
 
 from fastapi import Body, FastAPI, File, UploadFile
@@ -117,10 +118,24 @@ def inject_fault(request: FaultInjectionRequest) -> dict:
     fault = request.model_dump()
     frames = telemetry_service.generate_tick(fault)
     alert = intelligence_service.predict_latest()
+    
     graph_context = graph_service.localise(alert) if alert else None
     diagnosis = rag_llm_service.diagnose(alert, graph_context) if alert and graph_context else None
+    if diagnosis:
+        diagnosis["node_id"] = alert.get("node_id") if alert else None
+        
     remediation = remediation_service.decide_and_execute(diagnosis) if diagnosis else None
-    return {"ok": True, "data": {"frames": frames, "alert": alert, "graph_context": graph_context, "diagnosis": diagnosis, "remediation": remediation}}
+    
+    return {
+        "ok": True, 
+        "data": {
+            "frames": frames, 
+            "alert": alert, 
+            "graph_context": graph_context, 
+            "diagnosis": diagnosis, 
+            "remediation": remediation
+        }
+    }
 
 
 @app.post("/api/demo/run")
@@ -137,8 +152,8 @@ def run_demo(request: DemoRunRequest) -> dict:
     alert = intelligence_service.predict_latest()
     if not alert:
         alert = {
-            "alert_id": "manual_low_signal",
-            "timestamp": frames[0]["timestamp"],
+            "alert_id": f"manual_{int(time.time())}",
+            "timestamp": frames[-1]["timestamp"],
             "slice_id": request.slice_id,
             "node_id": request.node_id,
             "fault_type": request.fault_type,
@@ -148,9 +163,14 @@ def run_demo(request: DemoRunRequest) -> dict:
             "causal_edges_used": [],
             "status": "open",
         }
+    # Ensure diagnosis and remediation run for ALL alerts (predicted or manual fallback)
     graph_context = graph_service.localise(alert)
     diagnosis = rag_llm_service.diagnose(alert, graph_context)
-    remediation = remediation_service.decide_and_execute(diagnosis)
+    if diagnosis:
+        diagnosis["node_id"] = alert.get("node_id") # Explicitly propagate node_id
+        
+    remediation = remediation_service.decide_and_execute(diagnosis) if diagnosis else None
+    
     return {"ok": True, "data": {"frames": frames, "alert": alert, "graph_context": graph_context, "diagnosis": diagnosis, "remediation": remediation}}
 
 

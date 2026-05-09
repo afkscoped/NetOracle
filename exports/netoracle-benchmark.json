@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-05-09T10:18:35.133640+00:00",
+  "timestamp": "2026-05-09T12:06:58.592321+00:00",
   "scenarios": 60,
   "metrics": {
     "roc_auc": 0.78,
@@ -14,7 +14,7 @@
     "jain_fairness": 0.4571,
     "hopfield_convergence_iterations": 2,
     "hopfield_energy_monotonic": true,
-    "mean_inference_ms": 8.44,
+    "mean_inference_ms": 16.38,
     "conformal_coverage": 0.8997,
     "conformal_q_hat": 0.7714,
     "notears_shd": 0

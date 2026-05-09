@@ -232,6 +232,10 @@ OLLAMA_MODELS=phi3:mini
 - `GET /api/audit`
 - `GET /api/metrics`
 - `GET /api/data/schema` - View telemetry upload schema
+- `GET /api/data/mode` - View the active telemetry source and health hints
+- `POST /api/data/switch-mode?mode=open5gs` - Switch telemetry source at runtime
+- `GET /api/open5gs/health` - View Open5GS Prometheus/MongoDB/NF health
+- `WS /ws/telemetry` - Live telemetry tick stream
 - `POST /api/data/upload-telemetry` - Upload CSV/JSON telemetry
 - `POST /api/data/upload-topology` - Upload JSON topology
 - `POST /api/analyse/uploaded-data` - Run analysis on uploaded data
@@ -244,6 +248,74 @@ OLLAMA_MODELS=phi3:mini
 - `GET /api/cloud/status` - Check cloud export configuration
 - `POST /api/cloud/export-audit` - Export audit to cloud
 - `POST /api/cloud/export-benchmark` - Export benchmark to cloud
+
+## Open5GS / UERANSIM Integration
+
+NetOracle can stream live Open5GS 5G Core telemetry from WSL2 while the FastAPI app continues to run natively on Windows.
+
+### 1. Install and Start Open5GS in WSL2
+
+Use Ubuntu 22.04 under WSL2. From the repo root mounted in WSL2, run:
+
+```bash
+bash scripts/install_open5gs_wsl.sh
+```
+
+The installer covers system packages, MongoDB, Open5GS PPA install, Open5GS WebUI, Prometheus/node-exporter, NF metrics config, UERANSIM build, UERANSIM gNB/UE YAML, and service enablement. It configures Open5GS NF Prometheus metrics on:
+
+```text
+AMF 9090
+SMF 9091
+UPF 9092
+PCF 9093
+Prometheus server 9090
+MongoDB 27017
+Open5GS WebUI 3000
+```
+
+Then start the stack inside WSL2:
+
+```bash
+bash scripts/start_open5gs.sh
+```
+
+The script starts MongoDB, Open5GS NFs, Prometheus, UERANSIM gNB/UE, registers the test IMSI if missing, and prints the WSL2 IP to use from Windows.
+
+### 2. Configure NetOracle on Windows
+
+Edit `.env`:
+
+```env
+DATA_SOURCE_MODE=open5gs
+OPEN5GS_PROMETHEUS_URL=http://<wsl2-ip>:9090
+OPEN5GS_MONGO_URI=mongodb://<wsl2-ip>:27017
+OPEN5GS_WEBUI_URL=http://<wsl2-ip>:3000
+OPEN5GS_POLL_INTERVAL_S=5
+```
+
+To create or refresh the `wsl.local` hosts entry from an Administrator PowerShell:
+
+```powershell
+.\scripts\configure_wsl_bridge.ps1
+```
+
+If Open5GS is not reachable, NetOracle still runs and emits `open5gs_simulated` fallback frames with AMF, SMF, UPF, PCF, NRF, and gNB node ids.
+
+### 3. Verify
+
+Start NetOracle, then run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_open5gs_integration.py
+```
+
+Useful live checks:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/data/mode
+Invoke-RestMethod http://127.0.0.1:8000/api/open5gs/health
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/telemetry/tick
+```
 
 ## Data and Datasets
 

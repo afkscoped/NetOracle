@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.database import db
+from app.services.data_sources import METRIC_KEYS, get_adapter
 
 
 NODE_BLUEPRINTS = [
@@ -57,30 +58,40 @@ class TelemetryService:
             metrics["latency_ms"] += 90 * severity
             metrics["packet_loss"] += 0.035 * severity
 
+    def _normalise_frame(self, frame: dict[str, Any]) -> dict[str, Any]:
+        metrics = dict(frame.get("metrics") or {})
+        for key in METRIC_KEYS:
+            if key in frame and key not in metrics:
+                metrics[key] = frame[key]
+        clean_metrics = {}
+        for key, value in metrics.items():
+            try:
+                clean_metrics[key] = round(float(value), 6)
+            except (TypeError, ValueError):
+                continue
+        return {
+            "timestamp": str(frame.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+            "slice_id": str(frame.get("slice_id") or "slice_1"),
+            "node_id": str(frame.get("node_id") or "unknown_node"),
+            "node_type": str(frame.get("node_type") or "Unknown"),
+            "metrics": clean_metrics,
+            "fault_label": int(float(frame.get("fault_label") or 0)),
+            "fault_type": frame.get("fault_type") or None,
+            "source": frame.get("source", "unknown"),
+        }
+
     def generate_tick(self, fault: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         self.tick += 1
-        frames = []
-        now = datetime.now(timezone.utc).isoformat()
-        for slice_id, node_id, node_type in NODE_BLUEPRINTS:
-            metrics = self._base_metrics(node_type)
-            fault_label = 0
-            fault_type = None
-            if fault and fault.get("slice_id") == slice_id and fault.get("node_id") == node_id:
-                fault_type = str(fault.get("fault_type", "congestion"))
-                self._apply_fault(metrics, fault_type, float(fault.get("severity", 0.85)))
-                fault_label = 1
-            frame = {
-                "timestamp": now,
-                "slice_id": slice_id,
-                "node_id": node_id,
-                "node_type": node_type,
-                "metrics": {key: round(value, 4) for key, value in metrics.items()},
-                "fault_label": fault_label,
-                "fault_type": fault_type,
-            }
+        adapter = get_adapter()
+        try:
+            raw_frames = adapter.get_tick(fault)  # type: ignore[arg-type]
+        except TypeError:
+            raw_frames = adapter.get_tick()
+        frames = [self._normalise_frame(frame) for frame in raw_frames]
+        for frame in frames:
             db.insert_telemetry(frame)
-            frames.append(frame)
-        db.audit("telemetry_tick", {"frames": len(frames), "fault": fault})
+        source = frames[0].get("source", "unknown") if frames else "unknown"
+        db.audit("telemetry_tick", {"frames": len(frames), "fault": fault, "source": source})
         return frames
 
     def warm_start(self, ticks: int = 20) -> None:

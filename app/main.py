@@ -1,9 +1,11 @@
-from contextlib import asynccontextmanager
+import asyncio
+import os
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 import time
 from typing import Any
 
-from fastapi import Body, FastAPI, File, UploadFile
+from fastapi import Body, FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -14,9 +16,11 @@ mimetypes.add_type("text/css", ".css")
 
 from app.database import db
 from app.schemas import DemoRunRequest, FaultInjectionRequest, NaturalLanguageQuery
+from app.settings import get_settings
 from app.services.adaptive_rl import adaptive_rl_service
 from app.services.benchmarks import benchmark_service
 from app.services.cloud_sync import cloud_sync_service
+from app.services.data_sources import get_adapter, reset_adapter
 from app.services.graph import graph_service
 from app.services.ingestion import ingestion_service
 from app.services.intelligence import intelligence_service
@@ -30,14 +34,87 @@ from app.services.wireless import wireless_optimizer_service
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
+
+class TelemetryConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: set[WebSocket] = set()
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.active_connections.add(websocket)
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        self.active_connections.discard(websocket)
+
+    async def broadcast(self, payload: dict[str, Any]) -> None:
+        stale = []
+        for websocket in self.active_connections:
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                stale.append(websocket)
+        for websocket in stale:
+            self.disconnect(websocket)
+
+
+manager = TelemetryConnectionManager()
+
+
+async def auto_tick() -> None:
+    """
+    Background task: generates one telemetry tick every POLL_INTERVAL seconds.
+    Uses the configured data source adapter (simulation/csv/prometheus/open5gs).
+    Broadcasts live frames to all connected WebSocket clients.
+    """
+    adapter = get_adapter()
+    settings = get_settings()
+    logger.info(f"[AutoTick] Starting with adapter: {adapter.__class__.__name__}")
+
+    while True:
+        await asyncio.sleep(max(1, settings.open5gs_poll_interval_s))
+        try:
+            # Get frames from the configured source
+            frames = telemetry_service.generate_tick()
+
+            # Run intelligence prediction on latest frames
+            alert = intelligence_service.predict_latest()
+
+            # Update graph node risk from predictions
+            if alert and hasattr(graph_service, 'update_node_risk'):
+                for frame in frames:
+                    if frame.get("fault_label"):
+                        prob = alert.get("fault_probability", 0.5)
+                        graph_service.update_node_risk(frame["node_id"], prob)
+
+            # Broadcast to all connected WS clients
+            await manager.broadcast({
+                "type": "tick",
+                "frames": frames,
+                "alert": alert,
+                "source": frames[0].get("source", "unknown") if frames else "unknown",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[AutoTick] Error: {e}", exc_info=True)
+            continue
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
     graph_service.seed()
     rag_llm_service.seed()
     telemetry_service.warm_start(24)
-    yield
-    # Shutdown logic (none needed currently)
+    task = asyncio.create_task(auto_tick())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 app = FastAPI(title="NetOracle", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -94,6 +171,62 @@ def recent_telemetry(limit: int = 180) -> dict:
 @app.get("/api/data/schema")
 def data_schema() -> dict:
     return {"ok": True, "data": ingestion_service.schema()}
+
+
+@app.get("/api/data/mode")
+async def get_data_mode():
+    """Returns current data source mode and status."""
+    adapter = get_adapter()
+    info = adapter.get_source_info()
+    return info
+
+
+@app.get("/api/open5gs/health")
+async def get_open5gs_health():
+    """Returns Open5GS NF health status. Only meaningful in open5gs mode."""
+    adapter = get_adapter()
+    if hasattr(adapter, 'get_nf_health'):
+        return adapter.get_nf_health()
+    return {
+        "mode": adapter.get_source_info().get("mode"),
+        "message": "Open5GS adapter not active. Set DATA_SOURCE_MODE=open5gs."
+    }
+
+
+@app.post("/api/data/switch-mode")
+async def switch_data_mode(mode: str):
+    """
+    Switch data source mode at runtime without restarting.
+    Valid modes: simulation | csv_stream | prometheus | open5gs | upload
+    """
+    import os
+    from app.services.data_sources import reset_adapter
+    os.environ["DATA_SOURCE_MODE"] = mode
+    reset_adapter()
+    new_adapter = get_adapter()
+    return {
+        "status": "switched",
+        "mode": mode,
+        "adapter": new_adapter.__class__.__name__,
+    }
+
+
+@app.websocket("/ws/telemetry")
+async def telemetry_websocket(websocket: WebSocket) -> None:
+    await manager.connect(websocket)
+    try:
+        frames = telemetry_service.generate_tick()
+        await websocket.send_json({
+            "type": "tick",
+            "frames": frames,
+            "alert": intelligence_service.predict_latest(),
+            "source": frames[0].get("source", "unknown") if frames else "unknown",
+            "timestamp": frames[-1]["timestamp"] if frames else None,
+        })
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 @app.post("/api/data/upload-telemetry")
@@ -155,7 +288,7 @@ def run_demo(request: DemoRunRequest) -> dict:
     }
     frames = telemetry_service.generate_tick(fault)
     alert = intelligence_service.predict_latest()
-    if not alert:
+    if not alert or alert.get("node_id") != request.node_id or alert.get("slice_id") != request.slice_id:
         alert = {
             "alert_id": f"manual_{int(time.time())}",
             "timestamp": frames[-1]["timestamp"],

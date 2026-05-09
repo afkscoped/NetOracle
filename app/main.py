@@ -5,6 +5,10 @@ from fastapi import Body, FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
+import mimetypes
+
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 from app.database import db
 from app.schemas import DemoRunRequest, FaultInjectionRequest, NaturalLanguageQuery
@@ -231,6 +235,16 @@ def rl_update(payload: dict[str, Any] = Body(default={})) -> dict:
         str(payload.get("state", "congestion:low:medium")),
         str(payload.get("action", "scale_vnf")),
         float(payload.get("reward", 0.0)),
+        cost=float(payload.get("cost", 0.0)),
+    )}
+
+
+@app.post("/api/rl/train-episode")
+def rl_train_episode(payload: dict[str, Any] = Body(default={})) -> dict:
+    """Run simulated CMDP training episodes to improve the safety-constrained policy."""
+    return {"ok": True, "data": adaptive_rl_service.train_episode(
+        episodes=int(payload.get("episodes", 5)),
+        max_steps=int(payload.get("max_steps", 15)),
     )}
 
 

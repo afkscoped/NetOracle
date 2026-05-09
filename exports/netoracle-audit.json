@@ -3,7 +3,7 @@
   "entries": [
     {
       "id": 27,
-      "timestamp": "2026-05-09T18:27:10.137271+00:00",
+      "timestamp": "2026-05-09T19:06:07.457031+00:00",
       "event_type": "cloud_export",
       "payload": {
         "provider": "local",
@@ -14,247 +14,247 @@
     },
     {
       "id": 26,
-      "timestamp": "2026-05-09T18:27:10.122946+00:00",
+      "timestamp": "2026-05-09T19:06:07.435841+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 25,
-      "timestamp": "2026-05-09T18:27:10.038257+00:00",
+      "timestamp": "2026-05-09T19:06:07.342442+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 24,
-      "timestamp": "2026-05-09T18:27:09.950599+00:00",
+      "timestamp": "2026-05-09T19:06:07.258193+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 23,
-      "timestamp": "2026-05-09T18:27:09.865453+00:00",
+      "timestamp": "2026-05-09T19:06:07.173055+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 22,
-      "timestamp": "2026-05-09T18:27:09.783269+00:00",
+      "timestamp": "2026-05-09T19:06:07.078072+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 21,
-      "timestamp": "2026-05-09T18:27:09.705234+00:00",
+      "timestamp": "2026-05-09T19:06:06.989965+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 20,
-      "timestamp": "2026-05-09T18:27:09.619877+00:00",
+      "timestamp": "2026-05-09T19:06:06.896858+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 19,
-      "timestamp": "2026-05-09T18:27:09.540458+00:00",
+      "timestamp": "2026-05-09T19:06:06.809959+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 18,
-      "timestamp": "2026-05-09T18:27:09.463949+00:00",
+      "timestamp": "2026-05-09T19:06:06.721547+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 17,
-      "timestamp": "2026-05-09T18:27:09.378301+00:00",
+      "timestamp": "2026-05-09T19:06:06.638997+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 16,
-      "timestamp": "2026-05-09T18:27:09.297827+00:00",
+      "timestamp": "2026-05-09T19:06:06.548324+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 15,
-      "timestamp": "2026-05-09T18:27:09.212865+00:00",
+      "timestamp": "2026-05-09T19:06:06.447361+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 14,
-      "timestamp": "2026-05-09T18:27:09.125477+00:00",
+      "timestamp": "2026-05-09T19:06:06.359905+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 13,
-      "timestamp": "2026-05-09T18:27:09.040635+00:00",
+      "timestamp": "2026-05-09T19:06:06.265934+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 12,
-      "timestamp": "2026-05-09T18:27:08.953441+00:00",
+      "timestamp": "2026-05-09T19:06:06.178644+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 11,
-      "timestamp": "2026-05-09T18:27:08.842763+00:00",
+      "timestamp": "2026-05-09T19:06:06.076972+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 10,
-      "timestamp": "2026-05-09T18:27:08.739950+00:00",
+      "timestamp": "2026-05-09T19:06:05.977541+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 9,
-      "timestamp": "2026-05-09T18:27:08.624629+00:00",
+      "timestamp": "2026-05-09T19:06:05.893597+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 8,
-      "timestamp": "2026-05-09T18:27:08.502996+00:00",
+      "timestamp": "2026-05-09T19:06:05.808075+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 7,
-      "timestamp": "2026-05-09T18:27:08.380681+00:00",
+      "timestamp": "2026-05-09T19:06:05.719200+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 6,
-      "timestamp": "2026-05-09T18:27:08.263902+00:00",
+      "timestamp": "2026-05-09T19:06:05.631826+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 5,
-      "timestamp": "2026-05-09T18:27:08.161063+00:00",
+      "timestamp": "2026-05-09T19:06:05.533208+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 4,
-      "timestamp": "2026-05-09T18:27:08.072610+00:00",
+      "timestamp": "2026-05-09T19:06:05.441307+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 3,
-      "timestamp": "2026-05-09T18:27:07.993829+00:00",
+      "timestamp": "2026-05-09T19:06:05.358428+00:00",
       "event_type": "telemetry_tick",
       "payload": {
-        "frames": 12,
+        "frames": 8,
         "fault": null,
         "source": "simulation"
       }
     },
     {
       "id": 2,
-      "timestamp": "2026-05-09T18:27:07.913769+00:00",
+      "timestamp": "2026-05-09T19:06:05.274712+00:00",
       "event_type": "rag_seeded",
       "payload": {
         "incidents": 8
@@ -262,7 +262,7 @@
     },
     {
       "id": 1,
-      "timestamp": "2026-05-09T18:27:07.857466+00:00",
+      "timestamp": "2026-05-09T19:06:05.193613+00:00",
       "event_type": "topology_seeded",
       "payload": {
         "nodes": 17,

@@ -33,6 +33,16 @@ from app.settings import get_settings
  
 logger = logging.getLogger(__name__)
  
+# Restored constant for telemetry.py
+METRIC_KEYS = [
+    "cpu", 
+    "memory", 
+    "latency_ms", 
+    "packet_loss", 
+    "throughput_mbps", 
+    "prb_utilization"
+]
+ 
  
 # ══════════════════════════════════════════════════════════════════════════
 # Base adapter interface

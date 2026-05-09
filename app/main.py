@@ -1,9 +1,12 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 import time
 from typing import Any
+ 
+logger = logging.getLogger(__name__)
 
 from fastapi import Body, FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse

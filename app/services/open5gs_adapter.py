@@ -441,6 +441,21 @@ class Open5GSAdapter:
             "_raw_rule_count": rule_count,
         }
  
+    def _fetch_nrf_metrics(self) -> dict:
+        """Fetch NRF-specific Prometheus metrics."""
+        # NRF doesn't have much traffic, mostly registration.
+        # We simulate a low background CPU.
+        return {
+            "cpu": round(random.uniform(5, 15), 2),
+            "memory": self._sim_memory(),
+            "latency_ms": round(random.uniform(5, 10), 2),
+            "packet_loss": 0.0,
+            "throughput_mbps": 0.01,
+            "prb_utilization": 0.0,
+            "fault_label": 0,
+            "fault_type": "",
+        }
+ 
     def _fetch_gnb_metrics(self) -> dict:
         """
         gNB metrics from UERANSIM.
@@ -510,6 +525,7 @@ class Open5GSAdapter:
             "smf": self._fetch_smf_metrics,
             "upf": self._fetch_upf_metrics,
             "pcf": self._fetch_pcf_metrics,
+            "nrf": self._fetch_nrf_metrics,
             "gnb": self._fetch_gnb_metrics,
         }
  

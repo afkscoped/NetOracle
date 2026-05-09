@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-09T18:29:03.412569+00:00",
+  "timestamp": "2026-05-09T19:07:55.150315+00:00",
   "scenarios": 60,
   "metrics": {
-    "roc_auc": 0.495,
-    "precision": 0.333,
-    "recall": 1.0,
-    "false_positive_rate": 1.0,
+    "roc_auc": 0.479,
+    "precision": 0.312,
+    "recall": 0.75,
+    "false_positive_rate": 0.825,
     "mttp_minutes": 5,
     "localisation_accuracy": 1.0,
     "rca_accuracy": 0.25,
@@ -14,7 +14,7 @@
     "jain_fairness": 0.4571,
     "hopfield_convergence_iterations": 2,
     "hopfield_energy_monotonic": true,
-    "mean_inference_ms": 55.36,
+    "mean_inference_ms": 61.46,
     "conformal_coverage": 0.8997,
     "conformal_q_hat": 0.7714,
     "notears_shd": 0
@@ -67,7 +67,7 @@
   },
   "ablation": {
     "ctgnn_causal_attention": {
-      "auc": 0.495,
+      "auc": 0.479,
       "model": 0.9235757291553631,
       "mttp_minutes": 5
     },

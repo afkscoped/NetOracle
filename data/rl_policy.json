@@ -1,0 +1,8 @@
+{
+  "congestion:low:medium": {
+    "scale_vnf": 4.354,
+    "push_flow_rule": 0.0,
+    "reallocate_channel": 0.0,
+    "escalate_to_human": 0.0
+  }
+}

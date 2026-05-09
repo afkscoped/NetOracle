@@ -14,15 +14,48 @@ class RemediationService:
         confidence = float(diagnosis.get("confidence", 0))
         risk = diagnosis.get("risk", "high")
         fault_type = self._fault_type(diagnosis)
-        rl_recommendation = adaptive_rl_service.recommend(fault_type, risk, confidence)
+        
+        # Extract CMDP variables from Member 2's intelligence output
+        alert = diagnosis.get("evidence", {}).get("alert", {})
+        
+        # Conformal risk score: width of the uncertainty interval, or 1 - confidence as fallback
+        if "prob_upper" in alert and "prob_lower" in alert:
+            conformal_risk_score = alert["prob_upper"] - alert["prob_lower"]
+        else:
+            conformal_risk_score = 1.0 - confidence
+            
+        top_features = alert.get("top_features", [])
+        traffic_load = 90.0 if "prb_utilization" in top_features or "cpu" in top_features else 50.0
+
+        rl_recommendation = adaptive_rl_service.recommend(
+            fault_type=fault_type, 
+            risk=risk, 
+            probability=alert.get("fault_probability", 0.7),
+            conformal_risk_score=conformal_risk_score,
+            traffic_load=traffic_load
+        )
+        
         if rl_recommendation["action"] != "escalate_to_human":
             diagnosis = {**diagnosis, "recommended_action": rl_recommendation["action"]}
-        should_escalate = confidence < settings.confidence_threshold or risk != "low"
+            
+        cmdp_approved = rl_recommendation.get("cmdp_approved", True)
+        should_escalate = not cmdp_approved or confidence < settings.confidence_threshold or risk != "low"
+        
         if should_escalate:
-            result = self._escalate(diagnosis)
+            reason = rl_recommendation.get("cmdp_reason", "Confidence or risk thresholds not met.")
+            result = self._escalate(diagnosis, reason=reason)
         else:
             result = self._simulate_action(diagnosis)
+            
         result["rl_recommendation"] = rl_recommendation
+        # Surface CMDP safety metrics in remediation response
+        result["safety_cost"] = rl_recommendation.get("safety_cost", 0.0)
+        result["cmdp_status"] = {
+            "lambda_multiplier": rl_recommendation.get("lambda_multiplier", 0.0),
+            "cumulative_session_cost": rl_recommendation.get("cumulative_session_cost", 0.0),
+            "cost_limit": rl_recommendation.get("cost_limit", 5.0),
+            "safety_budget_remaining": rl_recommendation.get("safety_budget_remaining", 5.0),
+        }
         db.audit("remediation_decision", result)
         return result
 
@@ -57,10 +90,10 @@ class RemediationService:
             "safety_mechanism": "risk-gated simulated actuation with full audit trail",
         }
 
-    def _escalate(self, diagnosis: dict[str, Any]) -> dict[str, Any]:
+    def _escalate(self, diagnosis: dict[str, Any], reason: str = "Confidence threshold and risk classification gate") -> dict[str, Any]:
         settings = get_settings()
         payload = {
-            "text": f"NetOracle escalation for {diagnosis.get('alert_id')}: {diagnosis.get('root_cause')} confidence={diagnosis.get('confidence')} risk={diagnosis.get('risk')}"
+            "text": f"NetOracle escalation for {diagnosis.get('alert_id')}: {diagnosis.get('root_cause')} confidence={diagnosis.get('confidence')} risk={diagnosis.get('risk')}\nReason: {reason}"
         }
         delivered = False
         if settings.slack_webhook_url:
@@ -78,7 +111,7 @@ class RemediationService:
             "before_state": {"automation": "blocked"},
             "after_state": {"operator_ticket": "created", "slack_delivered": delivered},
             "operator_required": True,
-            "safety_mechanism": "confidence threshold and risk classification gate",
+            "safety_mechanism": reason,
         }
 
 

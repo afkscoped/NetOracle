@@ -130,6 +130,7 @@
         <div id="proactivePanel" class="proactive-panel">
           <div class="empty-state">Collecting telemetry for proactive forecast.</div>
         </div>
+        <div id="predictionAccuracyPanel" class="accuracy-strip"></div>
         <div class="tab-actions realtime-actions">
           <button class="btn-primary" id="btnRealtimeAnalyse">Analyse Core Stream</button>
           <button class="btn-secondary" id="btnSimulateFix">Simulate Best Fix</button>
@@ -201,6 +202,11 @@
           <button class="btn-primary" id="btnBenchmark">Run Benchmark</button>
         </div>
         <div class="terminal narrative-output" id="benchOutput">Click "Run Benchmark" to evaluate CTGNN vs. baselines.</div>
+        <div id="benchChart" class="bar-chart"></div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>DAG History <span class="badge-muted">latest snapshots</span></h2></div>
+        <div id="dagHistory" class="dag-history"></div>
       </div>
     </section>
 
@@ -215,7 +221,7 @@
       <div class="panel glass-panel tall">
         <div class="panel-header">
           <h2>Property Graph — Neo4j Compatible Schema</h2>
-          <span class="kpi-sub">Click a node to inspect</span>
+          <span class="kpi-sub">Click two nodes to highlight path</span>
         </div>
         <div id="topoGraph" class="graph-area tall-graph"></div>
       </div>
@@ -274,6 +280,15 @@
         </div>
       </div>
 
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Investigation Query <span class="badge-muted">NL-to-Cypher</span></h2></div>
+        <div class="nl-row">
+          <input id="diagQuestion" class="nl-input" value="What caused the last fault?"/>
+          <button class="btn-primary" id="btnDiagAsk">Ask</button>
+        </div>
+        <div class="terminal narrative-output" id="diagNlAnswer">Ask a topology or incident-memory question while investigating a fault.</div>
+      </div>
+
       <!-- Results panels -->
       <div id="diagResults" style="display:none">
         <div class="specialist-row" id="specialistCards"></div>
@@ -282,10 +297,14 @@
             <div class="panel-header"><h2>Alert</h2></div>
             <div id="alertCard" class="info-card"></div>
           </div>
-          <div class="panel glass-panel">
-            <div class="panel-header"><h2>Remediation</h2></div>
-            <div id="remCard" class="info-card"></div>
-          </div>
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Remediation</h2></div>
+          <div id="remCard" class="info-card"></div>
+        </div>
+      </div>
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Prediction Accuracy</h2></div>
+          <div id="diagAccuracy" class="accuracy-strip"></div>
         </div>
         <div class="panel glass-panel">
           <div class="panel-header"><h2>Explainable Diagnosis Timeline</h2></div>
@@ -318,6 +337,11 @@
           <button class="btn-secondary" id="btnPolicy">Show Policy State</button>
           <div class="terminal narrative-output" id="policyOutput">Policy interpretation will appear here.</div>
         </div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Allocation Stress Test</h2></div>
+        <button class="btn-primary" id="btnStressTest">Run Allocation Stress Test</button>
+        <div id="stressOutput" class="terminal narrative-output">Stress-test results will appear here.</div>
       </div>
       <div class="panel glass-panel">
         <div class="panel-header"><h2>Save Report</h2></div>
@@ -363,6 +387,40 @@
           <button class="btn-secondary" onclick="switchMode('prometheus')">Prometheus</button>
           <button class="btn-secondary" onclick="runOpen5gsDemo()">Analyse Open5GS Now</button>
         </div>
+      </div>
+      <div class="panel glass-panel synthetic-panel">
+        <div class="panel-header"><h2>Generate Synthetic Network Data <span class="badge-muted">realistic profiles</span></h2></div>
+        <div class="fault-grid">
+          <label class="field-label">Scenario
+            <select id="syntheticScenario" class="select-input">
+              <option value="mixed">Mixed Realistic</option>
+              <option value="normal">Normal 24h</option>
+              <option value="cascade_failure">Cascade Failure</option>
+              <option value="gradual_degradation">Gradual Degradation</option>
+              <option value="flash_crowd">Flash Crowd</option>
+            </select>
+          </label>
+          <label class="field-label">Duration Hours
+            <input id="syntheticDuration" type="number" min="1" max="48" step="1" value="6" class="num-input"/>
+          </label>
+          <label class="field-label">Fault Rate
+            <input id="syntheticFaultRate" type="number" min="0" max="0.3" step="0.01" value="0.08" class="num-input"/>
+          </label>
+          <label class="field-label">Nodes
+            <input id="syntheticNodes" type="number" min="5" max="20" step="1" value="8" class="num-input"/>
+          </label>
+        </div>
+        <div class="slice-checks">
+          <label><input class="slice-check" type="checkbox" value="slice_1" checked/> eMBB</label>
+          <label><input class="slice-check" type="checkbox" value="slice_2" checked/> mMTC</label>
+          <label><input class="slice-check" type="checkbox" value="slice_3" checked/> URLLC</label>
+        </div>
+        <div class="tab-actions" style="margin-top:14px">
+          <button class="btn-primary" id="btnGenerateSynthetic">Generate &amp; Load</button>
+          <button class="btn-secondary" id="btnTrainGenerated" onclick="fetch('/api/training/export-retrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:5000,cpu:true})}).then(r=>r.json()).then(j=>document.getElementById('syntheticOutput').innerHTML='<pre class=&quot;terminal&quot;>'+JSON.stringify(j.data||j,null,2)+'</pre>')">Train Model on This Data</button>
+        </div>
+        <div class="terminal narrative-output" id="syntheticOutput">Choose a scenario, then generate telemetry with correlated 5G metrics and fault cascades.</div>
+        <div id="datasetStats" class="dataset-stats"></div>
       </div>
       <div class="two-col">
         <div class="panel glass-panel">

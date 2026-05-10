@@ -39,6 +39,7 @@ from app.services.training_pipeline import training_pipeline_service
 from app.services.visualization import visualization_service
 from app.services.wireless import wireless_optimizer_service
 from app.services.xai import xai_service
+from scripts.generate_realistic_data import generate_realistic_rows, write_csv
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -105,6 +106,7 @@ async def auto_tick() -> None:
                 "alert": alert,
                 "proactive": proactive,
                 "realtime": realtime,
+                "metrics": intelligence_service.metrics(),
                 "source": frames[0].get("source", "unknown") if frames else "unknown",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
@@ -249,6 +251,7 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
             "alert": intelligence_service.predict_latest(),
             "proactive": proactive_engine.latest(),
             "realtime": realtime_engine.analyse_once(generate_tick=False, run_diagnosis=False),
+            "metrics": intelligence_service.metrics(),
             "source": frames[0].get("source", "unknown") if frames else "unknown",
             "timestamp": frames[-1]["timestamp"] if frames else None,
         })
@@ -534,6 +537,57 @@ def xai_prediction_latest() -> dict:
 @app.get("/api/datasets/registry")
 def datasets_registry() -> dict:
     return {"ok": True, "data": harmonizer_service.registry()}
+
+
+@app.post("/api/data/generate-synthetic")
+def generate_synthetic_data(payload: dict[str, Any] = Body(default={})) -> dict:
+    scenario = str(payload.get("scenario", "mixed")).strip() or "mixed"
+    duration_hours = max(0.25, min(float(payload.get("duration_hours", 6)), 48.0))
+    fault_rate = max(0.0, min(float(payload.get("fault_rate", 0.08)), 0.30))
+    node_count = max(5, min(int(payload.get("nodes", payload.get("node_count", 8))), 20))
+    slices = payload.get("slices") or ["slice_1", "slice_2", "slice_3"]
+    if not isinstance(slices, list):
+        slices = ["slice_1", "slice_2", "slice_3"]
+    slices = [str(item) for item in slices if str(item) in {"slice_1", "slice_2", "slice_3"}] or ["slice_1"]
+
+    rows, summary = generate_realistic_rows(
+        scenario=scenario,
+        duration_hours=duration_hours,
+        fault_rate=fault_rate,
+        slices=slices,
+        node_count=node_count,
+    )
+    output_path = Path("data/scenarios") / f"{scenario}.csv"
+    write_csv(output_path, rows)
+
+    frames = []
+    for row in rows:
+        frames.append({
+            "timestamp": row["timestamp"],
+            "slice_id": row["slice_id"],
+            "node_id": row["node_id"],
+            "node_type": row["node_type"],
+            "metrics": {key: row[key] for key in ["cpu", "memory", "latency_ms", "packet_loss", "throughput_mbps", "prb_utilization"]},
+            "fault_label": row["fault_label"],
+            "fault_type": row.get("fault_type") or None,
+            "source": row.get("source", "realistic_generator"),
+        })
+    telemetry_service.ingest_external_frames(frames, audit_event="realistic_synthetic_generated")
+    db.audit("synthetic_generation", {**summary, "output": str(output_path), "loaded_rows": len(frames)})
+    return {
+        "ok": True,
+        "data": {
+            **summary,
+            "output": str(output_path),
+            "loaded_rows": len(frames),
+            "preview": frames[:10],
+        },
+    }
+
+
+@app.get("/api/metrics/prediction-accuracy")
+def prediction_accuracy() -> dict:
+    return {"ok": True, "data": intelligence_service.prediction_accuracy()}
 
 
 @app.post("/api/training/start")

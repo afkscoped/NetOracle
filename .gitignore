@@ -11,3 +11,7 @@ reports/
 demo_output.json
 extract_html.py
 extracted_docs.txt
+
+artifacts/*.log
+exports/
+data/exported_telemetry.csv

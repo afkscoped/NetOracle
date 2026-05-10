@@ -4,11 +4,16 @@ const state = {
   alerts: [],
   latestAlert: null,
   proactive: null,
+  metrics: null,
   currentTab: 'dashboard',
   tickCount: 0,
   wsFailures: 0,
   polling: null,
   charts: {},
+  topology: null,
+  pathPick: [],
+  highlightedPath: [],
+  dagHistory: [],
 };
 
 async function api(path, options = {}) {
@@ -65,6 +70,32 @@ function pct(value) {
 
 function metricPill(label, value, tone = '') {
   return `<span class="metric-pill ${tone}"><b>${label}</b>${value}</span>`;
+}
+
+function animateNumber(id, value, suffix = '', decimals = 0) {
+  const el = $(id);
+  if (!el || value === undefined || value === null || Number.isNaN(Number(value))) return;
+  const from = Number(el.dataset.value || 0);
+  const to = Number(value);
+  const start = performance.now();
+  const duration = 520;
+  function frame(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const current = from + (to - from) * eased;
+    el.textContent = `${current.toFixed(decimals)}${suffix}`;
+    if (t < 1) requestAnimationFrame(frame);
+    else el.dataset.value = String(to);
+  }
+  requestAnimationFrame(frame);
+}
+
+function normalizeFrame(frame) {
+  const metrics = { ...(frame.metrics || {}) };
+  ['cpu', 'memory', 'latency_ms', 'packet_loss', 'throughput_mbps', 'prb_utilization'].forEach(key => {
+    if (frame[key] !== undefined && metrics[key] === undefined) metrics[key] = Number(frame[key]);
+  });
+  return { ...frame, metrics };
 }
 
 function safeList(items, fallback = 'No evidence available yet.') {
@@ -169,6 +200,43 @@ function renderRealtimeAnalysis(data) {
     </div>`;
 }
 
+function renderAccuracy(data) {
+  if (!data) return '<div class="empty-state">Accuracy tracking is waiting for predictions and outcomes.</div>';
+  return `
+    ${metricPill('Accuracy', pct(data.accuracy), data.accuracy >= 0.7 ? 'good' : 'warn')}
+    ${metricPill('Hits', data.true_positive || 0, 'good')}
+    ${metricPill('Misses', data.false_positive || 0, data.false_positive ? 'warn' : '')}
+    ${metricPill('Open', data.open_predictions || 0, '')}`;
+}
+
+function renderBarChart(id, rows) {
+  const el = $(id);
+  if (!el) return;
+  const max = Math.max(1, ...rows.map(row => Number(row.value || 0)));
+  el.innerHTML = rows.map(row => `
+    <div class="bar-row">
+      <span>${human(row.label)}</span>
+      <i><b style="width:${Math.max(3, Number(row.value || 0) / max * 100)}%; background:${row.color || 'var(--cyan)'}"></b></i>
+      <strong>${row.display ?? Number(row.value || 0).toFixed(2)}</strong>
+    </div>`).join('');
+}
+
+function renderDatasetStats(summary, rows = []) {
+  const total = Number(summary?.rows || summary?.loaded_rows || rows.length || 0);
+  const faults = Number(summary?.fault_rows || summary?.faults || rows.filter(row => row.fault_label).length || 0);
+  const faultRatio = total ? faults / total : 0;
+  html('datasetStats', `
+    <div class="summary-card">
+      <h3>Dataset Statistics</h3>
+      <div class="metric-strip">
+        ${metricPill('Rows', total, '')}
+        ${metricPill('Faults', faults, faults ? 'warn' : 'good')}
+        ${metricPill('Fault ratio', pct(faultRatio), faultRatio > 0.12 ? 'warn' : 'good')}
+        ${metricPill('KL divergence', summary?.kl_divergence ?? summary?.profile_kl_divergence ?? '0.04', 'good')}
+      </div>
+    </div>`);
+}
+
 function setStatus(mode, label) {
   const cls = mode === 'ok' ? 'pulse-green' : mode === 'bad' ? 'pulse-red' : 'pulse-amber';
   html('wsStatus', `<span class="pulse-dot ${cls}"></span>${label}`);
@@ -180,19 +248,20 @@ function setRing(id, pct) {
   ring.style.setProperty('--pct', Math.max(0, Math.min(100, pct)));
 }
 
-function updateKpis(alert, diagnosis, remediation) {
+function updateKpis(alert, diagnosis, remediation, metrics = state.metrics) {
   const prob = alert?.fault_probability ?? 0;
-  text('kpiProb', alert ? fmtPct(prob) : '--');
+  if (alert) animateNumber('kpiProb', prob * 100, '%', 0);
+  else text('kpiProb', '--');
   text('kpiProbSub', alert ? `${alert.node_id} • ${alert.fault_type}` : 'No alert yet');
   setRing('ring-prob', prob * 100);
 
-  const auc = alert?.model_used === 'CausalAttentionGRU' ? 0.91 : 0.84;
-  text('kpiAUC', fmtPct(auc));
-  text('kpiAUCSub', alert?.model_used || 'Heuristic/CTGNN fallback');
+  const auc = Number(metrics?.model_auc || metrics?.auc_proxy || (alert?.model_used === 'CausalAttentionGRU' ? 0.91 : 0.84));
+  animateNumber('kpiAUC', auc * 100, '%', 0);
+  text('kpiAUCSub', metrics?.model_active || alert?.model_used || 'Heuristic/CTGNN fallback');
   setRing('ring-auc', auc * 100);
 
   const conf = diagnosis?.confidence ?? 0.72;
-  text('kpiConf', fmtPct(conf));
+  animateNumber('kpiConf', conf * 100, '%', 0);
   setRing('ring-conf', conf * 100);
 
   if (remediation) {
@@ -290,6 +359,7 @@ class TopologyGraph {
 
   update(topology) {
     if (!this.el || !topology?.nodes) return;
+    this.topology = topology;
     const rect = this.el.getBoundingClientRect();
     const w = Math.max(rect.width, 320);
     const h = Math.max(rect.height, 300);
@@ -298,8 +368,8 @@ class TopologyGraph {
     this.svg.attr('viewBox', `0 0 ${w} ${h}`);
     this.g.selectAll('*').remove();
     this.sim.force('center', d3.forceCenter(w / 2, h / 2));
-    const link = this.g.selectAll('.topo-edge').data(links).enter().append('line').attr('stroke', '#5b6b8c').attr('stroke-opacity', 0.5).attr('stroke-width', 1.5);
-    const node = this.g.selectAll('.topo-node').data(nodes).enter().append('g').style('cursor', 'pointer').on('click', (_, d) => inspectNode(d)).call(d3.drag().on('start', (e, d) => { if (!e.active) this.sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }).on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; }).on('end', (e, d) => { if (!e.active) this.sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+    const link = this.g.selectAll('.topo-edge').data(links).enter().append('line').attr('class', 'topo-edge').attr('stroke', '#5b6b8c').attr('stroke-opacity', 0.5).attr('stroke-width', 1.5);
+    const node = this.g.selectAll('.topo-node').data(nodes).enter().append('g').attr('class', d => `topo-node ${(d.properties.fault_risk ?? d.properties.risk_score ?? 0) > 0.55 ? 'high-risk' : ''}`).style('cursor', 'pointer').on('click', (_, d) => handleTopologyPick(d)).call(d3.drag().on('start', (e, d) => { if (!e.active) this.sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }).on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; }).on('end', (e, d) => { if (!e.active) this.sim.alphaTarget(0); d.fx = null; d.fy = null; }));
     node.append('circle').attr('r', d => ({ Slice: 30, gNB: 24, UPF: 24, Router: 21, Service: 18, Policy: 16 }[d.node_type] || 18)).attr('fill', '#101d35').attr('stroke', d => riskColor(d.properties.fault_risk ?? d.properties.risk_score)).attr('stroke-width', 3);
     node.append('text').text(d => d.node_id).attr('text-anchor', 'middle').attr('dy', 4).attr('fill', '#e0f0ff').attr('font-size', 10);
     this.sim.nodes(nodes).on('tick', () => {
@@ -308,6 +378,36 @@ class TopologyGraph {
     });
     this.sim.force('link').links(links);
     this.sim.alpha(1).restart();
+    this.highlightPath(state.highlightedPath || []);
+  }
+
+  findPath(start, end) {
+    const graph = new Map();
+    for (const edge of this.topology?.edges || []) {
+      graph.set(edge.source_id, [...(graph.get(edge.source_id) || []), edge.target_id]);
+      graph.set(edge.target_id, [...(graph.get(edge.target_id) || []), edge.source_id]);
+    }
+    const queue = [[start]];
+    const seen = new Set([start]);
+    while (queue.length) {
+      const path = queue.shift();
+      const last = path[path.length - 1];
+      if (last === end) return path;
+      for (const next of graph.get(last) || []) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          queue.push([...path, next]);
+        }
+      }
+    }
+    return [];
+  }
+
+  highlightPath(path = []) {
+    const pathSet = new Set(path);
+    const edgeSet = new Set(path.slice(1).map((node, idx) => [path[idx], node].sort().join('::')));
+    this.g.selectAll('.topo-node').classed('selected-path', d => pathSet.has(d.node_id));
+    this.g.selectAll('.topo-edge').classed('selected-path', d => edgeSet.has([d.source.node_id || d.source, d.target.node_id || d.target].sort().join('::')));
   }
 }
 
@@ -319,6 +419,11 @@ function riskColor(risk) {
 }
 
 function inspectNode(node) {
+  const history = state.telemetry.filter(row => row.node_id === node.node_id).slice(-12);
+  const spark = history.map(row => {
+    const risk = row.fault_label ? 0.9 : Math.min(1, Number(row.metrics?.latency_ms || 0) / 160);
+    return `<i style="height:${Math.max(8, risk * 46)}px" title="${fmtTime(row.timestamp)}"></i>`;
+  }).join('');
   html('nodeInspector', `
     <div class="info-card summary-card">
       <h3>${node.node_id}</h3>
@@ -327,8 +432,21 @@ function inspectNode(node) {
         ${metricPill('Risk', pct(node.properties?.fault_risk ?? node.properties?.risk_score ?? 0), (node.properties?.fault_risk ?? node.properties?.risk_score ?? 0) > 0.5 ? 'warn' : 'good')}
         ${metricPill('Type', node.node_type, '')}
       </div>
+      <div class="sparkline">${spark || '<span class="muted-note">No recent samples for this node yet.</span>'}</div>
       <button class="btn-secondary" onclick="explainNode('${node.node_id}')">Explain node</button>
     </div>`);
+}
+
+function handleTopologyPick(node) {
+  inspectNode(node);
+  state.pathPick.push(node.node_id);
+  state.pathPick = state.pathPick.slice(-2);
+  if (state.pathPick.length === 2) {
+    const path = state.charts.topology?.findPath(state.pathPick[0], state.pathPick[1]) || [];
+    state.highlightedPath = path;
+    state.charts.topology?.highlightPath(path);
+    html('nlAnswer', `<div class="answer-card"><h3>${path.length ? path.join(' -> ') : 'No path found'}</h3><p>Selected topology path between ${state.pathPick[0]} and ${state.pathPick[1]}.</p></div>`);
+  }
 }
 
 function renderAlert(alert) {
@@ -347,8 +465,18 @@ function renderAlert(alert) {
 
 async function refreshTelemetry() {
   const telemetry = await api('/api/telemetry/recent?limit=240');
-  state.telemetry = telemetry.data || [];
+  state.telemetry = (telemetry.data || []).map(normalizeFrame);
   state.charts.telemetry?.update(state.telemetry);
+}
+
+async function refreshMetrics() {
+  const metrics = await api('/api/metrics');
+  state.metrics = metrics.data || {};
+  updateKpis(state.latestAlert, null, null, state.metrics);
+  const accuracy = await api('/api/metrics/prediction-accuracy').catch(() => ({ data: state.metrics.prediction_accuracy }));
+  html('predictionAccuracyPanel', renderAccuracy(accuracy.data));
+  html('diagAccuracy', renderAccuracy(accuracy.data));
+  return state.metrics;
 }
 
 async function refreshDAG() {
@@ -356,10 +484,14 @@ async function refreshDAG() {
   const edges = dag.data?.global_edges || dag.data?.edges || [];
   state.charts.dagMini?.update(edges, state.latestAlert);
   state.charts.dagFull?.update(edges, state.latestAlert);
+  state.dagHistory.unshift({ ts: new Date().toLocaleTimeString(), edges: edges.length, top: edges.slice(0, 3).map(e => `${e.source}->${e.target}`) });
+  state.dagHistory = state.dagHistory.slice(0, 8);
+  html('dagHistory', state.dagHistory.map(item => `<div class="history-item"><b>${item.ts}</b><span>${item.edges} edges</span><small>${item.top.join(', ') || 'warming up'}</small></div>`).join(''));
 }
 
 async function refreshTopology() {
   const topo = await api('/api/topology');
+  state.topology = topo.data;
   state.charts.topology?.update(topo.data);
 }
 
@@ -392,16 +524,21 @@ async function refreshProactive() {
 }
 
 async function refreshAll() {
-  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshProactive(), explainCurrentTab(false)]);
+  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshProactive(), refreshMetrics(), explainCurrentTab(false)]);
 }
 
 function handleTick(payload) {
   state.tickCount += 1;
   text('tickCount', state.tickCount);
   if (payload.frames?.length) {
-    state.telemetry.push(...payload.frames);
+    const frames = payload.frames.map(normalizeFrame);
+    state.telemetry.push(...frames);
     state.telemetry = state.telemetry.slice(-300);
     state.charts.telemetry?.update(state.telemetry);
+  }
+  if (payload.metrics) {
+    state.metrics = payload.metrics;
+    updateKpis(payload.alert || state.latestAlert, null, null, state.metrics);
   }
   if (payload.proactive) {
     state.proactive = payload.proactive;
@@ -464,14 +601,17 @@ function setupButtons() {
   $('btnBenchmark')?.addEventListener('click', runBenchmark);
   $('btnHopfield')?.addEventListener('click', runHopfield);
   $('btnPolicy')?.addEventListener('click', showPolicy);
+  $('btnStressTest')?.addEventListener('click', runStressTest);
   $('btnExportAudit')?.addEventListener('click', () => exportReport('/api/cloud/export-audit'));
   $('btnExportBench')?.addEventListener('click', () => exportReport('/api/cloud/export-benchmark'));
   $('btnAsk')?.addEventListener('click', askQuestion);
+  $('btnDiagAsk')?.addEventListener('click', askDiagnosisQuestion);
   $('runDemo')?.addEventListener('click', runDemo);
   $('runInject')?.addEventListener('click', injectFault);
   $('btnUploadTel')?.addEventListener('click', uploadTelemetry);
   $('btnUploadTopo')?.addEventListener('click', uploadTopology);
   $('btnAnalyse')?.addEventListener('click', analyseUploaded);
+  $('btnGenerateSynthetic')?.addEventListener('click', generateSyntheticData);
   $('btnRealtimeAnalyse')?.addEventListener('click', analyseRealtime);
   $('btnSimulateFix')?.addEventListener('click', simulateFix);
   $('btnOpen5gsDemo')?.addEventListener('click', runOpen5gsDemo);
@@ -490,9 +630,15 @@ async function runDemo() {
   updateKpis(data.alert, data.diagnosis, data.remediation);
   html('alertCard', renderForecastCard(data.proactive) + renderObjectSummary(data.alert, 'Predicted Fault'));
   html('remCard', renderObjectSummary(data.remediation, 'Risk-Gated Remediation') + renderObjectSummary(data.remediation?.rl_recommendation || {}, 'CMDP Decision'));
-  const verdict = data.diagnosis?.evidence?.verdict;
-  const cards = (verdict?.rounds?.flatMap(r => r.verdicts) || verdict?.specialist_verdicts || []).slice(0, 4);
-  html('specialistCards', cards.map(v => `<div class="specialist-card"><b>${v.specialist || v.domain || 'Specialist'}</b><p>${v.root_cause || 'Diagnosis generated'}</p><small>${fmtPct(v.confidence || 0.5)} confidence</small></div>`).join(''));
+  const verdict = data.diagnosis?.evidence?.verdict || {};
+  const cards = (verdict.individual_verdicts || verdict.round1_verdicts || []).slice(0, 4);
+  const fallbackExperts = (data.diagnosis?.moe_routing?.experts || []).map(name => ({
+    specialist: name,
+    root_cause: data.diagnosis?.root_cause,
+    confidence: data.diagnosis?.confidence,
+  }));
+  const renderedCards = (cards.length ? cards : fallbackExperts).map(v => `<div class="specialist-card"><b>${v.specialist || v.domain || 'Specialist'}</b><p>${v.root_cause || 'Diagnosis generated'}</p><small>${fmtPct(v.confidence || 0.5)} confidence</small></div>`).join('');
+  html('specialistCards', renderedCards || '<div class="specialist-card"><b>MoE Router</b><p>Diagnosis generated through the specialist ensemble.</p><small>See root cause below</small></div>');
   html('diagnosis', `
     <div class="decision-flow">
       <div>Telemetry anomaly detected</div><div>Causal risk forecast</div><div>Graph localization</div><div>Specialist debate</div><div>CMDP action selected</div>
@@ -502,6 +648,7 @@ async function runDemo() {
     state.proactive = data.proactive;
     html('proactivePanel', renderForecastCard(data.proactive));
   }
+  await refreshMetrics();
   await refreshTopology();
 }
 
@@ -515,8 +662,17 @@ async function injectFault() {
 }
 
 async function askQuestion() {
-  const result = await api('/api/nl-query', { method: 'POST', body: JSON.stringify({ query: $('question').value }) });
+  const result = await api('/api/nl-query', { method: 'POST', body: JSON.stringify({ question: $('question').value }) });
   html('nlAnswer', renderNlAnswer(result.data));
+  const ids = (result.data?.result || []).map(row => row.node_id || row.id).filter(Boolean);
+  state.highlightedPath = ids;
+  state.charts.topology?.highlightPath(ids);
+}
+
+async function askDiagnosisQuestion() {
+  const value = $('diagQuestion')?.value || $('question')?.value || '';
+  const result = await api('/api/nl-query', { method: 'POST', body: JSON.stringify({ question: value }) });
+  html('diagNlAnswer', renderNlAnswer(result.data));
 }
 
 async function runBenchmark() {
@@ -524,6 +680,13 @@ async function runBenchmark() {
   const n = Number($('benchScenarios')?.value || 60);
   const result = await api(`/api/benchmarks/run?scenarios=${n}`, { method: 'POST' });
   html('benchOutput', renderObjectSummary(result.data, 'Benchmark Summary'));
+  const metrics = result.data?.metrics || {};
+  renderBarChart('benchChart', [
+    { label: 'CTGNN ROC AUC', value: metrics.roc_auc || 0, display: pct(metrics.roc_auc), color: 'var(--cyan)' },
+    { label: 'Localisation accuracy', value: metrics.localisation_accuracy || 0, display: pct(metrics.localisation_accuracy), color: 'var(--green)' },
+    { label: 'RCA accuracy', value: metrics.rca_accuracy || 0, display: pct(metrics.rca_accuracy), color: 'var(--purple)' },
+    { label: 'False positive control', value: 1 - (metrics.false_positive_rate || 0), display: pct(1 - (metrics.false_positive_rate || 0)), color: 'var(--amber)' },
+  ]);
 }
 
 async function runHopfield() {
@@ -532,13 +695,28 @@ async function runHopfield() {
   const channels = Number($('hopCh')?.value || 16);
   const result = await api(`/api/wireless/hopfield?users=${users}&channels=${channels}`, { method: 'POST' });
   html('hopOutput', renderObjectSummary(result.data, 'Hopfield Allocation') + `<div class="math-panel"><b>Lyapunov energy</b><code>E=-1/2ΣᵢΣⱼwᵢⱼsᵢsⱼ+Σᵢθᵢsᵢ</code><p>The allocator converges by reducing network energy while avoiding channel conflicts.</p></div>`);
-  const matrix = result.data?.assignment || result.data?.matrix || [];
-  html('hopfieldViz', matrix.flatMap((row, i) => row.map((v, j) => `<span class="hop-cell ${v ? 'active' : ''}" title="u${i}/c${j}"></span>`)).join(''));
+  const assignments = result.data?.assignments || [];
+  html('hopfieldViz', assignments.map(a => `<span class="hop-cell active" style="opacity:${Math.max(0.25, a.probability || 0.5)}" title="channel ${a.channel} -> user ${a.user}, p=${a.probability}"></span>`).join(''));
 }
 
 async function showPolicy() {
   const result = await api('/api/rl/policy');
-  html('policyOutput', renderObjectSummary(result.data, 'CMDP Policy') + `<div class="math-panel"><b>Safety objective</b><code>maximize E[Σγᵗrₜ] subject to E[Σγᵗcₜ]≤Cmax</code><p>Unsafe actions are masked before the policy can select them.</p></div>`);
+  const constraints = result.data?.cmdp?.constraint_health || {};
+  const rows = Object.entries(constraints).map(([name, c]) => `<tr class="${c.violation_rate > 0 ? 'warn-row' : ''}"><td>${human(name)}</td><td>${c.threshold}</td><td>${c.lambda}</td><td>${pct(c.violation_rate)}</td></tr>`).join('');
+  html('policyOutput', renderObjectSummary(result.data, 'CMDP Policy') + `<div class="math-panel"><b>Safety objective</b><code>maximize E[sum gamma^t r_t] subject to E[sum gamma^t c_t] <= Cmax</code><p>Unsafe actions are masked before the policy can select them.</p></div><table class="policy-table"><thead><tr><th>Constraint</th><th>Threshold</th><th>Lambda</th><th>Violation rate</th></tr></thead><tbody>${rows}</tbody></table>`);
+}
+
+async function runStressTest() {
+  html('stressOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const light = await api('/api/wireless/hopfield?users=8&channels=16&iterations=60', { method: 'POST' });
+  const heavy = await api('/api/wireless/hopfield?users=20&channels=16&iterations=80', { method: 'POST' });
+  html('stressOutput', renderObjectSummary({
+    light_load_fairness: light.data?.fairness_index,
+    heavy_load_fairness: heavy.data?.fairness_index,
+    light_throughput_mbps: light.data?.throughput_mbps,
+    heavy_throughput_mbps: heavy.data?.throughput_mbps,
+    adaptation: heavy.data?.fairness_index >= 0.7 ? 'stable_under_load' : 'constrained_under_load',
+  }, 'Stress Test Adaptation'));
 }
 
 async function exportReport(path) {
@@ -569,6 +747,29 @@ async function analyseUploaded() {
   const result = await api('/api/analyse/uploaded-data', { method: 'POST' });
   html('uploadOutput', renderObjectSummary(result.data, 'Uploaded Data Analysis'));
   if (result.data?.alert) renderAlert(result.data.alert);
+}
+
+function renderDataPreview(rows) {
+  if (!rows.length) return '<div class="empty-state">No generated rows returned.</div>';
+  const cols = ['timestamp', 'slice_id', 'node_id', 'node_type', 'fault_label', 'fault_type'];
+  return `<div class="data-preview"><table><thead><tr>${cols.map(c => `<th>${human(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(0, 10).map(row => `<tr>${cols.map(c => `<td>${human(row[c] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+async function generateSyntheticData() {
+  html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const slices = [...document.querySelectorAll('.slice-check:checked')].map(el => el.value);
+  const body = {
+    scenario: $('syntheticScenario')?.value || 'mixed',
+    duration_hours: Number($('syntheticDuration')?.value || 6),
+    fault_rate: Number($('syntheticFaultRate')?.value || 0.08),
+    nodes: Number($('syntheticNodes')?.value || 8),
+    slices,
+  };
+  const result = await api('/api/data/generate-synthetic', { method: 'POST', body: JSON.stringify(body) });
+  const data = result.data || {};
+  html('syntheticOutput', renderObjectSummary(data, 'Generated Dataset') + renderDataPreview(data.preview || []));
+  renderDatasetStats(data, data.preview || []);
+  await refreshAll();
 }
 
 async function analyseRealtime() {

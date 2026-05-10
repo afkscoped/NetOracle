@@ -97,7 +97,11 @@ class ExplainabilityService:
             narrative = "The causal graph shows which metrics tend to move before others. Strong edges are used as causal priors for proactive prediction."
         elif tab == "topology" and forecast:
             path = graph_service.localise({"slice_id": forecast["slice_id"], "node_id": forecast["node_id"], "alert_id": "explain"}).get("affected_path", [])
-            narrative = f"Topology analysis localizes risk around {forecast['node_id']}. Affected path: {' → '.join(path) if path else forecast['node_id']}."
+            path_ids = [
+                item.get("node_id", str(item)) if isinstance(item, dict) else str(item)
+                for item in path
+            ]
+            narrative = f"Topology analysis localizes risk around {forecast['node_id']}. Affected path: {' -> '.join(path_ids) if path_ids else forecast['node_id']}."
         elif tab == "diagnosis" and forecast:
             narrative = f"Diagnosis should focus on {forecast['fault_type']} at {forecast['node_id']} because {', '.join(forecast.get('top_drivers', []))} are leading risk drivers."
         elif tab == "wireless" and forecast:

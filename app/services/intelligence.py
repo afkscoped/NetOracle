@@ -235,6 +235,7 @@ class IntelligenceService:
         alerts = db.latest_alerts(100)
         telemetry = db.latest_telemetry(500)
         labelled = [row for row in telemetry if row.get("fault_label") == 1]
+        accuracy = self.prediction_accuracy()
 
         arch = self._model_meta.get("architecture", "CausalAttentionGRU") if self._model_loaded else "heuristic_sigmoid"
         return {
@@ -246,6 +247,7 @@ class IntelligenceService:
             "lead_time_minutes": 10 if alerts else 0,
             "alerts": len(alerts),
             "labelled_fault_frames": len(labelled),
+            "prediction_accuracy": accuracy,
             "baselines": {
                 "threshold_monitoring_auc_proxy": 0.66,
                 "isolation_forest_auc_proxy": 0.72,
@@ -259,6 +261,62 @@ class IntelligenceService:
                 "risk-gated autonomous remediation with audit trail",
                 "graph-grounded multi-agent LLM diagnosis",
             ],
+        }
+
+    def prediction_accuracy(self, horizon_minutes: int = 20) -> dict[str, Any]:
+        """Estimate prediction hit/miss quality from persisted alerts and labelled telemetry."""
+        alerts = db.latest_alerts(200)
+        rows = db.latest_telemetry(2000)
+        if not alerts:
+            return {
+                "evaluated": 0,
+                "true_positive": 0,
+                "false_alarm": 0,
+                "pending": 0,
+                "hit_rate": 0.0,
+            }
+
+        evaluated = 0
+        true_positive = 0
+        false_alarm = 0
+        pending = 0
+        now = datetime.now(timezone.utc)
+
+        for alert in alerts:
+            try:
+                alert_ts = datetime.fromisoformat(str(alert["timestamp"]).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            horizon = int(alert.get("horizon_minutes") or horizon_minutes)
+            deadline = alert_ts.timestamp() + horizon * 60
+            matching_rows = []
+            for row in rows:
+                if row.get("slice_id") != alert.get("slice_id") or row.get("node_id") != alert.get("node_id"):
+                    continue
+                try:
+                    row_ts = datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if alert_ts.timestamp() <= row_ts.timestamp() <= deadline:
+                    matching_rows.append(row)
+            if matching_rows:
+                evaluated += 1
+                if any(int(row.get("fault_label") or 0) == 1 for row in matching_rows):
+                    true_positive += 1
+                else:
+                    false_alarm += 1
+            elif now.timestamp() < deadline:
+                pending += 1
+            else:
+                evaluated += 1
+                false_alarm += 1
+
+        return {
+            "evaluated": evaluated,
+            "true_positive": true_positive,
+            "false_alarm": false_alarm,
+            "pending": pending,
+            "hit_rate": round(true_positive / max(evaluated, 1), 3),
         }
 
 

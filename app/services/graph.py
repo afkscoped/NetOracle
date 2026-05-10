@@ -529,33 +529,69 @@ class GraphService:
         q = question.lower()
         slice_match = re.search(r"slice\s*([123])", q)
         slice_id = f"slice_{slice_match.group(1)}" if slice_match else "slice_1"
-        node_match = re.search(r"\b(?:upf|gnb|router|app|slice|policy)[_\s-]?(?:latency|throughput|[123])\b", q)
+        node_match = re.search(r"\b(?:upf|gnb|router|app|slice|policy|amf|smf|pcf|nrf)[_\s-]?(?:latency|throughput|[123])\b", q)
         node_id = node_match.group(0).replace(" ", "_").replace("-", "_") if node_match else "upf_1"
-        if "vnf" in q or "upf" in q or "connected" in q:
+        nodes = self.nodes()
+        edges = self.edges()
+        if "last fault" in q or "caused" in q or "root cause" in q:
+            audits = db.audit_entries(80)
+            fault_events = [
+                item for item in audits
+                if item.get("event_type") in {"fault_predicted", "fault_diagnosed", "remediation_decision"}
+            ]
+            cypher = "MATCH (a:Audit) WHERE a.event_type IN ['fault_predicted','fault_diagnosed'] RETURN a ORDER BY a.timestamp DESC LIMIT 5"
+            result = fault_events[:5]
+        elif "how many" in q and "node" in q:
+            slice_edges = [edge for edge in edges if edge["source_id"] == slice_id]
+            ids = {slice_id, *[edge["target_id"] for edge in slice_edges]}
+            cypher = "MATCH (s:Slice {id:$slice_id})--(n) RETURN count(n)"
+            result = [{"slice_id": slice_id, "node_count": len(ids), "nodes": sorted(ids)}]
+        elif "share" in q and ("infrastructure" in q or "resource" in q or "control" in q):
+            shared_edges = [edge for edge in edges if edge["relation"] in {"PEERS_WITH", "SHARES_CONTROL_PLANE"}]
+            ids = {node_id for edge in shared_edges for node_id in (edge["source_id"], edge["target_id"])}
+            cypher = "MATCH (a)-[:PEERS_WITH|SHARES_CONTROL_PLANE]-(b) RETURN a,b"
+            result = [node for node in nodes if node["node_id"] in ids]
+        elif "vnf" in q or "upf" in q or "connected" in q:
             cypher = "MATCH (s:Slice {id:$slice_id})-[:USES]->(:gNB)-[:FORWARDS_TO]->(u:UPF) RETURN u"
-            result = [node for node in self.nodes() if node["node_id"] == slice_id.replace("slice", "upf")]
+            target_ids = set()
+            frontier = {slice_id}
+            for _ in range(3):
+                next_frontier = set()
+                for edge in edges:
+                    if edge["source_id"] in frontier:
+                        next_frontier.add(edge["target_id"])
+                target_ids.update(next_frontier)
+                frontier = next_frontier
+            result = [node for node in nodes if node["node_id"] in target_ids and node["node_type"] in {"UPF", "gNB", "Router", "Service"}]
         elif "policy" in q:
             cypher = "MATCH (s:Slice {id:$slice_id})-[:GOVERNED_BY]->(p:Policy) RETURN p"
-            edges = [edge for edge in self.edges() if edge["source_id"] == slice_id and edge["relation"] == "GOVERNED_BY"]
-            ids = {edge["target_id"] for edge in edges}
-            result = [node for node in self.nodes() if node["node_id"] in ids]
+            policy_edges = [edge for edge in edges if edge["source_id"] == slice_id and edge["relation"] == "GOVERNED_BY"]
+            ids = {edge["target_id"] for edge in policy_edges}
+            result = [node for node in nodes if node["node_id"] in ids]
         elif "path" in q:
             cypher = "MATCH path = (s:Slice {id:$slice_id})-[*]->(a:Service) RETURN path"
             result = self.localise({"alert_id": "nl_query", "slice_id": slice_id, "node_id": slice_id.replace("slice", "app")}).get("affected_path", [])
         elif "risk" in q:
             cypher = "MATCH (n) WHERE n.fault_risk > 0.5 RETURN n ORDER BY n.fault_risk DESC"
             result = [
-                node for node in self.nodes()
+                node for node in nodes
                 if float(node.get("properties", {}).get("fault_risk", node.get("properties", {}).get("risk_score", 0)) or 0) > 0.5
             ]
         elif "neighbour" in q or "neighbor" in q:
             cypher = "MATCH (n {id:$node_id})--(m) RETURN m"
             adjacency = self._adjacency()
             ids = {target for target, _ in adjacency.get(node_id, [])}
-            result = [node for node in self.nodes() if node["node_id"] in ids]
+            result = [node for node in nodes if node["node_id"] in ids]
         else:
-            cypher = "MATCH (n) RETURN n LIMIT 10"
-            result = self.nodes()[:10]
+            cypher = "MATCH (n) WHERE n.id CONTAINS $keyword OR n.label CONTAINS $keyword RETURN n LIMIT 5"
+            keywords = [token for token in re.findall(r"[a-z0-9_]+", q) if len(token) > 2]
+            scored = []
+            for node in nodes:
+                haystack = f"{node.get('node_id','')} {node.get('node_type','')} {node.get('label','')}".lower()
+                score = sum(1 for keyword in keywords if keyword in haystack)
+                if score:
+                    scored.append((score, node))
+            result = [node for _, node in sorted(scored, key=lambda item: item[0], reverse=True)[:5]] or nodes[:5]
         return {"cypher": cypher, "parameters": {"slice_id": slice_id, "node_id": node_id}, "result": result}
 
     def nl_to_cypher(self, question: str) -> dict[str, Any]:
@@ -564,6 +600,7 @@ class GraphService:
 Graph node types: Slice, gNB, UPF, Router, Service, Policy.
 Edges: USES, FORWARDS_TO, EXITS_VIA, SERVES, GOVERNED_BY, PEERS_WITH, SHARES_CONTROL_PLANE.
 Node IDs: slice_1..3, gnb_1..3, upf_1..3, router_1..3, app_1..3, policy_latency, policy_throughput.
+Properties: node_id, node_type, label, properties.fault_risk, properties.risk_score, properties.sla, properties.priority.
 
 Q: Which VNFs are connected to Slice 1?
 Cypher: MATCH (s:Slice {id:'slice_1'})-[:USES]->(:gNB)-[:FORWARDS_TO]->(u:UPF) RETURN u
@@ -575,6 +612,12 @@ Q: Which nodes have high fault risk?
 Cypher: MATCH (n) WHERE n.fault_risk > 0.5 RETURN n ORDER BY n.fault_risk DESC
 Q: Show the path from slice_1 to app_1
 Cypher: MATCH path = (s:Slice {id:'slice_1'})-[*]->(a:Service {id:'app_1'}) RETURN path
+Q: Which slices share infrastructure?
+Cypher: MATCH (a)-[:PEERS_WITH|SHARES_CONTROL_PLANE]-(b) RETURN a,b
+Q: What caused the last fault?
+Cypher: MATCH (a:Audit) WHERE a.event_type IN ['fault_predicted','fault_diagnosed'] RETURN a ORDER BY a.timestamp DESC LIMIT 5
+Q: How many nodes are in Slice 1?
+Cypher: MATCH (s:Slice {id:'slice_1'})--(n) RETURN count(n)
 """
         cypher = None
         method = "regex_fallback"

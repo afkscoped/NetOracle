@@ -39,6 +39,21 @@ class Settings:
         self.supabase_url = os.getenv("SUPABASE_URL", env_file.get("SUPABASE_URL", ""))
         self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", env_file.get("SUPABASE_SERVICE_ROLE_KEY", ""))
         self.supabase_bucket = os.getenv("SUPABASE_BUCKET", env_file.get("SUPABASE_BUCKET", "netoracle"))
+        self.data_source_mode = os.getenv("DATA_SOURCE_MODE", env_file.get("DATA_SOURCE_MODE", "simulation"))
+        self.open5gs_prometheus_url = os.getenv(
+            "OPEN5GS_PROMETHEUS_URL",
+            env_file.get("OPEN5GS_PROMETHEUS_URL", "http://localhost:9090"),
+        )
+        self.open5gs_mongo_uri = os.getenv(
+            "OPEN5GS_MONGO_URI",
+            env_file.get("OPEN5GS_MONGO_URI", "mongodb://localhost:27017"),
+        )
+        self.open5gs_webui_url = os.getenv(
+            "OPEN5GS_WEBUI_URL",
+            env_file.get("OPEN5GS_WEBUI_URL", "http://localhost:3000"),
+        )
+        self.open5gs_poll_interval_s = int(os.getenv("OPEN5GS_POLL_INTERVAL_S", env_file.get("OPEN5GS_POLL_INTERVAL_S", "5")))
+        self.prometheus_url = os.getenv("PROMETHEUS_URL", env_file.get("PROMETHEUS_URL", "http://localhost:9090"))
 
     @property
     def db_path(self) -> Path:

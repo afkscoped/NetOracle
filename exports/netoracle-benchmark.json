@@ -1,20 +1,20 @@
 {
-  "timestamp": "2026-05-09T10:18:35.133640+00:00",
+  "timestamp": "2026-05-09T19:07:55.150315+00:00",
   "scenarios": 60,
   "metrics": {
-    "roc_auc": 0.78,
-    "precision": 1.0,
-    "recall": 0.6,
-    "false_positive_rate": 0.0,
+    "roc_auc": 0.479,
+    "precision": 0.312,
+    "recall": 0.75,
+    "false_positive_rate": 0.825,
     "mttp_minutes": 5,
     "localisation_accuracy": 1.0,
-    "rca_accuracy": 1.0,
+    "rca_accuracy": 0.25,
     "safe_remediation_rate": 1.0,
     "audit_completeness": 1.0,
     "jain_fairness": 0.4571,
     "hopfield_convergence_iterations": 2,
     "hopfield_energy_monotonic": true,
-    "mean_inference_ms": 8.44,
+    "mean_inference_ms": 61.46,
     "conformal_coverage": 0.8997,
     "conformal_q_hat": 0.7714,
     "notears_shd": 0
@@ -56,10 +56,10 @@
     }
   },
   "status": {
-    "roc_auc": "pass",
-    "false_positive_rate": "research",
+    "roc_auc": "fail",
+    "false_positive_rate": "fail",
     "localisation_accuracy": "research",
-    "rca_accuracy": "research",
+    "rca_accuracy": "fail",
     "safe_remediation_rate": "research",
     "audit_completeness": "research",
     "jain_fairness": "pass",
@@ -67,7 +67,7 @@
   },
   "ablation": {
     "ctgnn_causal_attention": {
-      "auc": 0.78,
+      "auc": 0.479,
       "model": 0.9235757291553631,
       "mttp_minutes": 5
     },
@@ -94,8 +94,8 @@
     "shd_vs_ground_truth": 0
   },
   "benefit_summary": {
-    "prediction_is_useful": true,
-    "alert_fatigue_controlled": true,
+    "prediction_is_useful": false,
+    "alert_fatigue_controlled": false,
     "closed_loop_is_safe": true,
     "uncertainty_calibrated": true
   }

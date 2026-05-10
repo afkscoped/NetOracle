@@ -535,4 +535,13 @@ class GraphService:
         return payload
 
 
+    def update_node_risk(self, node_id: str, risk_score: float) -> None:
+        """Update the risk score property of a node in the graph."""
+        db.execute(
+            "UPDATE topology_nodes SET properties_json = json_set(properties_json, '$.risk_score', ?) WHERE node_id = ?",
+            (risk_score, node_id),
+        )
+        logger.debug("Updated risk score for %s: %f", node_id, risk_score)
+
+
 graph_service = GraphService()

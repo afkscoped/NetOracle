@@ -13,7 +13,7 @@ import requests
 from pydantic import BaseModel, Field
 
 from app.database import db, decode, encode
-from app.services.graph import graph_service
+from app.services.graph import graph_service, groq_model_candidates
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -222,21 +222,33 @@ def route_to_specialists(
 # ── Multi-Specialist Debate Protocol ─────────────────────────────────────
 
 def call_llm(prompt: str) -> dict:
-    """Calls the local Ollama model (or configured model)."""
+    """Calls the Groq API model."""
     settings = get_settings()
-    model = settings.model_names[0] if settings.model_names else "phi3:mini"
-    try:
-        response = requests.post(
-            f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
-            timeout=30,
-        )
-        response.raise_for_status()
-        text = response.json().get("response", "{}")
-        return json.loads(text)
-    except Exception as e:
-        logger.error(f"call_llm error: {e}")
+    if not settings.groq_api_key:
+        logger.error("GROQ_API_KEY is not configured.")
         return {}
+    full_prompt = prompt + "\n\nProvide the output in JSON format."
+    for model in groq_model_candidates():
+        try:
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "temperature": 0.1,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            text = response.json()["choices"][0]["message"]["content"]
+            result = json.loads(text)
+            result.setdefault("_model", model)
+            return result
+        except Exception as e:
+            logger.warning("Groq call failed for %s: %s", model, e)
+    return {}
 
 
 def _call_specialist_llm(specialist: dict, prompt: str) -> dict:
@@ -391,6 +403,21 @@ class RagLlmService:
                 (incident_id, title, fault_type, body, encode(embed(title + " " + body))),
             )
         db.audit("rag_seeded", {"incidents": len(POSTMORTEMS)})
+
+    def add_incident(self, title: str, fault_type: str, body: str) -> dict[str, Any]:
+        incident_id = f"user_{hashlib.sha1((title + body).encode()).hexdigest()[:10]}"
+        incident = {
+            "incident_id": incident_id,
+            "title": title,
+            "fault_type": fault_type or "unknown",
+            "body": body,
+        }
+        db.execute(
+            "INSERT OR REPLACE INTO incidents(incident_id, title, fault_type, body, embedding_json) VALUES (?, ?, ?, ?, ?)",
+            (incident_id, title, incident["fault_type"], body, encode(embed(title + " " + body))),
+        )
+        db.audit("incident_added", incident)
+        return incident
 
     def retrieve(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
         self.seed()

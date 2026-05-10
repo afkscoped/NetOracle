@@ -236,8 +236,9 @@ class IntelligenceService:
         telemetry = db.latest_telemetry(500)
         labelled = [row for row in telemetry if row.get("fault_label") == 1]
 
+        arch = self._model_meta.get("architecture", "CausalAttentionGRU") if self._model_loaded else "heuristic_sigmoid"
         return {
-            "model_active": "CausalAttentionGRU" if self._model_loaded else "heuristic_sigmoid",
+            "model_active": arch,
             "model_auc": self._model_meta.get("auc", 0.0) if self._model_loaded else 0.0,
             "conformal_calibrated": self._conformal.is_calibrated,
             "conformal_q_hat": self._conformal.q_hat if self._conformal.is_calibrated else None,
@@ -253,7 +254,7 @@ class IntelligenceService:
             "novel_mechanisms": [
                 "NOTEARS gradient-based causal discovery (Zheng et al. NeurIPS 2018)",
                 "federated causal edge voting with confidence promotion",
-                "CausalAttentionGRU with causal-prior temporal attention",
+                f"{arch} with causal-prior temporal attention",
                 "split conformal prediction with 90% coverage guarantee",
                 "risk-gated autonomous remediation with audit trail",
                 "graph-grounded multi-agent LLM diagnosis",

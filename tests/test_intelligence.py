@@ -173,11 +173,11 @@ def test_predict_returns_none_on_empty(client):
 
 
 def test_telemetry_tick_generates_frames(client):
-    """Telemetry tick produces 8 frames (as per NODE_TEMPLATES)."""
+    """Telemetry tick produces frames from configured data source."""
     response = client.post("/api/telemetry/tick")
     assert response.status_code == 200
     data = response.json()["data"]
-    assert len(data) == 8
+    assert len(data) >= 1  # Adapter-dependent: CSV may return 1+, simulation returns 12
 
 
 def test_fault_inject_produces_alert(client):

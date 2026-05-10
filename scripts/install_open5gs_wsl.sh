@@ -60,10 +60,10 @@ EOF
 }
 
 echo "[6/10] Enabling Open5GS Prometheus exporters..."
-append_metrics_block /etc/open5gs/amf.yaml 9090
-append_metrics_block /etc/open5gs/smf.yaml 9091
-append_metrics_block /etc/open5gs/upf.yaml 9092
-append_metrics_block /etc/open5gs/pcf.yaml 9093
+append_metrics_block /etc/open5gs/amf.yaml 9095
+append_metrics_block /etc/open5gs/smf.yaml 9096
+append_metrics_block /etc/open5gs/upf.yaml 9097
+append_metrics_block /etc/open5gs/pcf.yaml 9098
 
 echo "[7/10] Configuring Prometheus scrape jobs..."
 sudo tee /etc/prometheus/prometheus.yml >/dev/null <<'EOF'
@@ -74,20 +74,20 @@ global:
 scrape_configs:
   - job_name: 'open5gs-amf'
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ['localhost:9095']
     metrics_path: /metrics
 
   - job_name: 'open5gs-smf'
     static_configs:
-      - targets: ['localhost:9091']
+      - targets: ['localhost:9096']
 
   - job_name: 'open5gs-upf'
     static_configs:
-      - targets: ['localhost:9092']
+      - targets: ['localhost:9097']
 
   - job_name: 'open5gs-pcf'
     static_configs:
-      - targets: ['localhost:9093']
+      - targets: ['localhost:9098']
 
   - job_name: 'node'
     static_configs:

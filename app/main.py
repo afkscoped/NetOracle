@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 from pathlib import Path
 import time
 from typing import Any
@@ -23,15 +24,21 @@ from app.settings import get_settings
 from app.services.adaptive_rl import adaptive_rl_service
 from app.services.benchmarks import benchmark_service
 from app.services.cloud_sync import cloud_sync_service
+from app.services.data_harmonizer import harmonizer_service
 from app.services.data_sources import get_adapter, reset_adapter
+from app.services.explainability import explainability_service
 from app.services.graph import graph_service
 from app.services.ingestion import ingestion_service
 from app.services.intelligence import intelligence_service
+from app.services.proactive_engine import proactive_engine
 from app.services.rag_llm import rag_llm_service
+from app.services.realtime_engine import realtime_engine
 from app.services.remediation import remediation_service
 from app.services.telemetry import telemetry_service
+from app.services.training_pipeline import training_pipeline_service
 from app.services.visualization import visualization_service
 from app.services.wireless import wireless_optimizer_service
+from app.services.xai import xai_service
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -81,6 +88,8 @@ async def auto_tick() -> None:
 
             # Run intelligence prediction on latest frames
             alert = intelligence_service.predict_latest()
+            proactive = proactive_engine.latest()
+            realtime = realtime_engine.analyse_once(generate_tick=False, run_diagnosis=False)
 
             # Update graph node risk from predictions
             if alert and hasattr(graph_service, 'update_node_risk'):
@@ -94,6 +103,8 @@ async def auto_tick() -> None:
                 "type": "tick",
                 "frames": frames,
                 "alert": alert,
+                "proactive": proactive,
+                "realtime": realtime,
                 "source": frames[0].get("source", "unknown") if frames else "unknown",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
@@ -181,19 +192,32 @@ async def get_data_mode():
     """Returns current data source mode and status."""
     adapter = get_adapter()
     info = adapter.get_source_info()
-    return info
+    return {"ok": True, "data": info}
 
 
 @app.get("/api/open5gs/health")
 async def get_open5gs_health():
-    """Returns Open5GS NF health status. Only meaningful in open5gs mode."""
+    """Returns Open5GS NF health for the configured core adapter if DATA_SOURCE_MODE=open5gs."""
     adapter = get_adapter()
     if hasattr(adapter, 'get_nf_health'):
-        return adapter.get_nf_health()
-    return {
+        return {"ok": True, "data": adapter.get_nf_health()}
+    return {"ok": True, "data": {
         "mode": adapter.get_source_info().get("mode"),
         "message": "Open5GS adapter not active. Set DATA_SOURCE_MODE=open5gs."
-    }
+    }}
+
+
+@app.get("/api/open5gs-demo/health")
+def open5gs_demo_health() -> dict:
+    from app.services.open5gs_adapter import Open5GSAdapter
+    settings = get_settings()
+    adapter = Open5GSAdapter(settings.open5gs_prometheus_url, settings.open5gs_mongo_uri)
+    return {"ok": True, "data": {"mode": "open5gs_demo_addon", "core_data_source_unchanged": get_adapter().get_source_info(), **adapter.get_nf_health()}}
+
+
+@app.post("/api/open5gs-demo/analyse")
+def open5gs_demo_analyse(payload: dict[str, Any] = Body(default={})) -> dict:
+    return {"ok": True, "data": realtime_engine.open5gs_demo_tick(ingest=bool(payload.get("ingest", True)))}
 
 
 @app.post("/api/data/switch-mode")
@@ -207,11 +231,11 @@ async def switch_data_mode(mode: str):
     os.environ["DATA_SOURCE_MODE"] = mode
     reset_adapter()
     new_adapter = get_adapter()
-    return {
+    return {"ok": True, "data": {
         "status": "switched",
         "mode": mode,
         "adapter": new_adapter.__class__.__name__,
-    }
+    }}
 
 
 @app.websocket("/ws/telemetry")
@@ -223,6 +247,8 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
             "type": "tick",
             "frames": frames,
             "alert": intelligence_service.predict_latest(),
+            "proactive": proactive_engine.latest(),
+            "realtime": realtime_engine.analyse_once(generate_tick=False, run_diagnosis=False),
             "source": frames[0].get("source", "unknown") if frames else "unknown",
             "timestamp": frames[-1]["timestamp"] if frames else None,
         })
@@ -254,6 +280,17 @@ def analyse_uploaded_data() -> dict:
     return {"ok": True, "data": ingestion_service.analyse_uploaded_data()}
 
 
+@app.post("/api/incidents/add")
+def add_incident(payload: dict[str, Any] = Body(...)) -> dict:
+    title = str(payload.get("title") or "").strip()
+    fault_type = str(payload.get("fault_type") or "unknown").strip()
+    body = str(payload.get("body") or "").strip()
+    if not title or not body:
+        return {"ok": False, "error": "Both title and body are required."}
+    incident = rag_llm_service.add_incident(title, fault_type, body)
+    return {"ok": True, "data": incident}
+
+
 @app.post("/api/fault/inject")
 def inject_fault(request: FaultInjectionRequest) -> dict:
     fault = request.model_dump()
@@ -266,12 +303,14 @@ def inject_fault(request: FaultInjectionRequest) -> dict:
         diagnosis["node_id"] = alert.get("node_id") if alert else None
         
     remediation = remediation_service.decide_and_execute(diagnosis) if diagnosis else None
+    proactive = proactive_engine.latest()
     
     return {
         "ok": True, 
         "data": {
             "frames": frames, 
             "alert": alert, 
+            "proactive": proactive,
             "graph_context": graph_context, 
             "diagnosis": diagnosis, 
             "remediation": remediation
@@ -311,8 +350,9 @@ def run_demo(request: DemoRunRequest) -> dict:
         diagnosis["node_id"] = alert.get("node_id") # Explicitly propagate node_id
         
     remediation = remediation_service.decide_and_execute(diagnosis) if diagnosis else None
+    proactive = proactive_engine.latest()
     
-    return {"ok": True, "data": {"frames": frames, "alert": alert, "graph_context": graph_context, "diagnosis": diagnosis, "remediation": remediation}}
+    return {"ok": True, "data": {"frames": frames, "alert": alert, "proactive": proactive, "graph_context": graph_context, "diagnosis": diagnosis, "remediation": remediation}}
 
 
 @app.get("/api/causal-graph")
@@ -362,8 +402,158 @@ def visualization_replay(limit: int = 80) -> dict:
 
 
 @app.post("/api/nl-query")
-def nl_query(request: NaturalLanguageQuery) -> dict:
-    return {"ok": True, "data": graph_service.nl_to_cypher(request.question)}
+def nl_query(payload: dict[str, Any] = Body(...)) -> dict:
+    question = str(payload.get("question") or payload.get("query") or "").strip()
+    if not question:
+        return {"ok": False, "error": "Field 'query' or 'question' is required."}
+    return {"ok": True, "data": graph_service.nl_to_cypher(question)}
+
+
+@app.get("/api/proactive/latest")
+def proactive_latest() -> dict:
+    return {"ok": True, "data": proactive_engine.latest()}
+
+
+@app.get("/api/proactive/forecast")
+def proactive_forecast(limit: int = 240) -> dict:
+    return {"ok": True, "data": proactive_engine.forecast(limit)}
+
+
+@app.post("/api/proactive/avoid")
+def proactive_avoid() -> dict:
+    return {"ok": True, "data": proactive_engine.avoid()}
+
+
+@app.get("/api/proactive/explain")
+def proactive_explain() -> dict:
+    return {"ok": True, "data": explainability_service.latest_prediction_explanation()}
+
+
+@app.get("/api/realtime/analyse")
+def realtime_analyse(generate_tick: bool = True, run_diagnosis: bool = True) -> dict:
+    return {"ok": True, "data": realtime_engine.analyse_once(generate_tick=generate_tick, run_diagnosis=run_diagnosis)}
+
+
+@app.post("/api/realtime/simulate-fix")
+def realtime_simulate_fix(payload: dict[str, Any] = Body(default={})) -> dict:
+    return {"ok": True, "data": realtime_engine.simulate_fix(payload)}
+
+
+@app.get("/api/explain/tab/{tab_name}")
+def explain_tab(tab_name: str, node_id: str | None = None) -> dict:
+    return {"ok": True, "data": explainability_service.explain_tab(tab_name, node_id)}
+
+
+@app.post("/api/explain/event")
+def explain_event(payload: dict[str, Any] = Body(default={})) -> dict:
+    return {"ok": True, "data": explainability_service.explain_event(payload)}
+
+
+@app.get("/api/explain/node/{node_id}")
+def explain_node(node_id: str) -> dict:
+    return {"ok": True, "data": explainability_service.explain_node(node_id)}
+
+
+@app.get("/api/explain/prediction/latest")
+def explain_prediction_latest() -> dict:
+    return {"ok": True, "data": explainability_service.latest_prediction_explanation()}
+
+
+@app.get("/api/xai/explain/{tab_name}")
+def xai_explain(tab_name: str, node_id: str | None = None) -> dict:
+    """Generate Groq-powered SHAP-based XAI explanation for a dashboard tab."""
+    return {"ok": True, "data": xai_service.generate_explanation(tab_name, node_id)}
+
+
+@app.post("/api/training/export-retrain")
+def training_export_retrain(payload: dict[str, Any] = Body(default={})) -> dict:
+    """Export telemetry DB to CSV and trigger retraining pipeline.
+    This enables the model to learn from live/real data collected in production."""
+    import csv
+    from pathlib import Path
+
+    # Step 1: Export telemetry to CSV
+    rows = db.latest_telemetry(int(payload.get("limit", 5000)))
+    if not rows:
+        return {"ok": False, "error": "No telemetry data in database to export."}
+
+    export_path = Path("data/exported_telemetry.csv")
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "timestamp", "slice_id", "node_id", "node_type",
+        "cpu", "memory", "latency_ms", "packet_loss",
+        "throughput_mbps", "prb_utilization", "fault_label", "fault_type",
+    ]
+    with open(export_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            metrics = row.get("metrics", {})
+            writer.writerow({
+                "timestamp": row.get("timestamp", ""),
+                "slice_id": row.get("slice_id", ""),
+                "node_id": row.get("node_id", ""),
+                "node_type": row.get("node_type", ""),
+                "cpu": metrics.get("cpu", 0),
+                "memory": metrics.get("memory", 0),
+                "latency_ms": metrics.get("latency_ms", 0),
+                "packet_loss": metrics.get("packet_loss", 0),
+                "throughput_mbps": metrics.get("throughput_mbps", 0),
+                "prb_utilization": metrics.get("prb_utilization", 0),
+                "fault_label": row.get("fault_label", 0),
+                "fault_type": row.get("fault_type", ""),
+            })
+
+    export_result = {
+        "rows_exported": len(rows),
+        "csv_path": str(export_path),
+    }
+
+    # Step 2: Trigger retraining
+    train_payload = {
+        "data": str(export_path),
+        "epochs": int(payload.get("epochs", 8)),
+        "batch_size": int(payload.get("batch_size", 256)),
+        "hidden_dim": int(payload.get("hidden_dim", 128)),
+    }
+    if payload.get("cpu"):
+        train_payload["cpu"] = True
+
+    train_result = training_pipeline_service.start(train_payload)
+
+    db.audit("export_and_retrain", {**export_result, "training": train_result})
+    return {"ok": True, "data": {"export": export_result, "training": train_result}}
+
+
+@app.get("/api/xai/explain/prediction/latest")
+def xai_prediction_latest() -> dict:
+    return {"ok": True, "data": explainability_service.latest_prediction_explanation()}
+
+
+@app.get("/api/datasets/registry")
+def datasets_registry() -> dict:
+    return {"ok": True, "data": harmonizer_service.registry()}
+
+
+@app.post("/api/training/start")
+def training_start(payload: dict[str, Any] = Body(default={})) -> dict:
+    return {"ok": True, "data": training_pipeline_service.start(payload)}
+
+
+@app.get("/api/training/status")
+def training_status() -> dict:
+    return {"ok": True, "data": training_pipeline_service.status()}
+
+
+@app.post("/api/training/stop")
+def training_stop() -> dict:
+    return {"ok": True, "data": training_pipeline_service.stop()}
+
+
+@app.get("/api/training/metrics")
+def training_metrics() -> dict:
+    return {"ok": True, "data": training_pipeline_service.metrics()}
 
 
 @app.post("/api/benchmarks/run")

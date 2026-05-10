@@ -2,9 +2,11 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 import requests
@@ -14,6 +16,11 @@ from app.database import db, decode, encode
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def groq_model_candidates() -> list[str]:
+    configured = os.getenv("GROQ_MODEL", "").strip()
+    return [model for model in [configured, "llama-3.1-8b-instant", "llama3-8b-8192"] if model]
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +302,9 @@ class GraphService:
         self._NEIGHBOURHOOD_CACHE[cache_key] = {"ts": time.time(), "data": result}
         return result
 
+    def get_node_neighbourhood(self, node_id: str, depth: int = 2, max_nodes: int = 20, fault_type: Optional[str] = None) -> dict:
+        return self.get_node_neighbourhood_v2(node_id, depth=depth, max_nodes=max_nodes, fault_type=fault_type)
+
     @staticmethod
     def serialise_graphrag_context(neighbourhood: dict, token_budget: int = 600) -> str:
         lines = []
@@ -326,9 +336,11 @@ class GraphService:
     # GraphRAG: LLM-based entity / relationship extraction
     # -------------------------------------------------------------------
 
-    def _extract_via_ollama(self, text: str) -> GraphExtract | None:
-        """Attempt extraction using a local Ollama model."""
+    def _extract_via_groq(self, text: str) -> GraphExtract | None:
+        """Attempt extraction using Groq API."""
         settings = get_settings()
+        if not settings.groq_api_key:
+            return None
         system_prompt = (
             "You are a technical knowledge extraction agent for a 5G network monitoring system. "
             "Extract system components, errors, faults, and agent actions as entities. "
@@ -336,23 +348,28 @@ class GraphService:
             "Return ONLY valid JSON matching this schema: "
             '{"relationships": [{"source": "...", "target": "...", "relation_type": "...", "context": "..."}]}'
         )
-        try:
-            response = requests.post(
-                f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-                json={
-                    "model": settings.model_names[0] if settings.model_names else "phi3:mini",
-                    "prompt": f"{system_prompt}\n\nExtract relationships from:\n{text}",
-                    "stream": False,
-                    "format": "json",
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            raw = response.json().get("response", "{}")
-            return GraphExtract.model_validate_json(raw)
-        except Exception as exc:
-            logger.debug("Ollama extraction failed: %s", exc)
-            return None
+        for model in groq_model_candidates():
+            try:
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Extract relationships from:\n{text}"}
+                        ],
+                        "temperature": 0.1,
+                        "response_format": {"type": "json_object"}
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+                raw = response.json()["choices"][0]["message"]["content"]
+                return GraphExtract.model_validate_json(raw)
+            except Exception as exc:
+                logger.debug("Groq extraction failed for %s: %s", model, exc)
+        return None
 
     def _extract_via_openai(self, text: str) -> GraphExtract | None:
         """Attempt extraction using OpenAI API (requires OPENAI_API_KEY)."""
@@ -443,10 +460,10 @@ class GraphService:
         Extract structured graph data from unstructured text.
         Tries Ollama → OpenAI → regex-heuristic fallback (graceful degradation).
         """
-        # 1. Try local Ollama
-        result = self._extract_via_ollama(text)
+        # 1. Try Groq
+        result = self._extract_via_groq(text)
         if result and result.relationships:
-            logger.info("Extraction via Ollama: %d relationships", len(result.relationships))
+            logger.info("Extraction via Groq: %d relationships", len(result.relationships))
             return result
 
         # 2. Try OpenAI
@@ -507,15 +524,13 @@ class GraphService:
         logger.info("GraphRAG ingestion: %s", summary)
         return summary
 
-    # -------------------------------------------------------------------
-    # NL-to-Cypher (existing)
-    # -------------------------------------------------------------------
-
-    def nl_to_cypher(self, question: str) -> dict[str, Any]:
+    def _regex_query(self, question: str) -> dict[str, Any]:
         self.seed()
         q = question.lower()
         slice_match = re.search(r"slice\s*([123])", q)
         slice_id = f"slice_{slice_match.group(1)}" if slice_match else "slice_1"
+        node_match = re.search(r"\b(?:upf|gnb|router|app|slice|policy)[_\s-]?(?:latency|throughput|[123])\b", q)
+        node_id = node_match.group(0).replace(" ", "_").replace("-", "_") if node_match else "upf_1"
         if "vnf" in q or "upf" in q or "connected" in q:
             cypher = "MATCH (s:Slice {id:$slice_id})-[:USES]->(:gNB)-[:FORWARDS_TO]->(u:UPF) RETURN u"
             result = [node for node in self.nodes() if node["node_id"] == slice_id.replace("slice", "upf")]
@@ -524,22 +539,98 @@ class GraphService:
             edges = [edge for edge in self.edges() if edge["source_id"] == slice_id and edge["relation"] == "GOVERNED_BY"]
             ids = {edge["target_id"] for edge in edges}
             result = [node for node in self.nodes() if node["node_id"] in ids]
-        elif "risk" in q or "neighbour" in q or "neighbor" in q:
+        elif "path" in q:
+            cypher = "MATCH path = (s:Slice {id:$slice_id})-[*]->(a:Service) RETURN path"
+            result = self.localise({"alert_id": "nl_query", "slice_id": slice_id, "node_id": slice_id.replace("slice", "app")}).get("affected_path", [])
+        elif "risk" in q:
+            cypher = "MATCH (n) WHERE n.fault_risk > 0.5 RETURN n ORDER BY n.fault_risk DESC"
+            result = [
+                node for node in self.nodes()
+                if float(node.get("properties", {}).get("fault_risk", node.get("properties", {}).get("risk_score", 0)) or 0) > 0.5
+            ]
+        elif "neighbour" in q or "neighbor" in q:
             cypher = "MATCH (n {id:$node_id})--(m) RETURN m"
-            result = self.nodes()[:5]
+            adjacency = self._adjacency()
+            ids = {target for target, _ in adjacency.get(node_id, [])}
+            result = [node for node in self.nodes() if node["node_id"] in ids]
         else:
             cypher = "MATCH (n) RETURN n LIMIT 10"
             result = self.nodes()[:10]
-        payload = {"question": question, "cypher": cypher, "parameters": {"slice_id": slice_id}, "result": result, "confidence": 0.76}
+        return {"cypher": cypher, "parameters": {"slice_id": slice_id, "node_id": node_id}, "result": result}
+
+    def nl_to_cypher(self, question: str) -> dict[str, Any]:
+        self.seed()
+        few_shot = """You translate natural language questions about a 5G network topology into Cypher queries.
+Graph node types: Slice, gNB, UPF, Router, Service, Policy.
+Edges: USES, FORWARDS_TO, EXITS_VIA, SERVES, GOVERNED_BY, PEERS_WITH, SHARES_CONTROL_PLANE.
+Node IDs: slice_1..3, gnb_1..3, upf_1..3, router_1..3, app_1..3, policy_latency, policy_throughput.
+
+Q: Which VNFs are connected to Slice 1?
+Cypher: MATCH (s:Slice {id:'slice_1'})-[:USES]->(:gNB)-[:FORWARDS_TO]->(u:UPF) RETURN u
+Q: What policy governs Slice 2?
+Cypher: MATCH (s:Slice {id:'slice_2'})-[:GOVERNED_BY]->(p:Policy) RETURN p
+Q: What neighbors does upf_1 have?
+Cypher: MATCH (n {id:'upf_1'})--(m) RETURN m
+Q: Which nodes have high fault risk?
+Cypher: MATCH (n) WHERE n.fault_risk > 0.5 RETURN n ORDER BY n.fault_risk DESC
+Q: Show the path from slice_1 to app_1
+Cypher: MATCH path = (s:Slice {id:'slice_1'})-[*]->(a:Service {id:'app_1'}) RETURN path
+"""
+        cypher = None
+        method = "regex_fallback"
+        settings = get_settings()
+        if settings.groq_api_key:
+            for model in groq_model_candidates():
+                try:
+                    response = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": f"{few_shot}\nReturn only one Cypher MATCH query, no markdown."},
+                                {"role": "user", "content": f"Q: {question}\nCypher:"}
+                            ],
+                            "temperature": 0.1
+                        },
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    raw_text = response.json()["choices"][0]["message"]["content"]
+                    for line in raw_text.splitlines():
+                        stripped = line.strip().strip("`").replace("cypher", "").strip()
+                        if "MATCH" in stripped.upper() and "RETURN" in stripped.upper():
+                            cypher = stripped
+                            method = "groq_llm"
+                            break
+                    if cypher:
+                        break
+                except Exception as exc:
+                    logger.warning("Groq NL-to-Cypher failed for %s: %s. Trying fallback model or regex.", model, exc)
+        fallback = self._regex_query(question)
+        payload = {
+            "question": question,
+            "cypher": cypher or fallback["cypher"],
+            "method": method,
+            "parameters": fallback["parameters"],
+            "result": fallback["result"],
+            "confidence": 0.88 if method == "groq_llm" else 0.65,
+        }
         db.audit("nl_to_cypher", payload)
         return payload
 
 
     def update_node_risk(self, node_id: str, risk_score: float) -> None:
-        """Update the risk score property of a node in the graph."""
+        row = db.fetch_one("SELECT properties_json FROM topology_nodes WHERE node_id = ?", (node_id,))
+        if not row:
+            return
+        props = decode(row["properties_json"], {})
+        props["fault_risk"] = round(float(risk_score), 4)
+        props["risk_score"] = round(float(risk_score), 4)
+        props["risk_updated_at"] = datetime.now(timezone.utc).isoformat()
         db.execute(
-            "UPDATE topology_nodes SET properties_json = json_set(properties_json, '$.risk_score', ?) WHERE node_id = ?",
-            (risk_score, node_id),
+            "UPDATE topology_nodes SET properties_json = ? WHERE node_id = ?",
+            (encode(props), node_id),
         )
         logger.debug("Updated risk score for %s: %f", node_id, risk_score)
 

@@ -1,98 +1,424 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NetOracle</title>
-  <link rel="icon" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>NetOracle — Federated Causal Fault Intelligence</title>
+  <meta name="description" content="NetOracle: Predict, localise, diagnose and remediate 5G network faults using causal AI, graph intelligence and multi-LLM ensemble."/>
+  <link rel="icon" href="/static/favicon.svg"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/styles.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7" defer></script>
 </head>
 <body>
-  <main class="shell">
-    <section class="hero glass">
-      <div>
-        <p class="eyebrow">Federated Causal Network Fault Intelligence</p>
-        <h1>NetOracle</h1>
-        <p class="subtitle">Predict faults, localise infrastructure, diagnose root cause, and safely remediate through one no-Docker local interface.</p>
+
+<!-- Top Status Bar -->
+<header class="topbar">
+  <div class="topbar-logo">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="13" stroke="#00f5ff" stroke-width="1.5"/><circle cx="14" cy="14" r="7" fill="url(#og)" opacity=".9"/><defs><radialGradient id="og" cx="35%" cy="30%"><stop offset="0%" stop-color="#fff"/><stop offset="40%" stop-color="#00f5ff"/><stop offset="100%" stop-color="#7c3aed"/></radialGradient></defs></svg>
+    <span class="topbar-title">NetOracle</span>
+    <span class="topbar-sub">Federated Causal Intelligence</span>
+  </div>
+  <div class="topbar-status">
+    <button class="btn-primary" id="btnExplainTab" style="padding: 4px 12px; font-size: 11px; margin-right: 10px;">✨ Explain Tab</button>
+    <span class="status-pill" id="wsStatus"><span class="pulse-dot pulse-amber"></span>Connecting…</span>
+    <span class="status-pill"><span class="pulse-dot pulse-green" id="tickDot"></span><span id="tickCount">0</span> ticks</span>
+    <span class="status-pill alert-pill" id="alertBadge" style="display:none"><span class="pulse-dot pulse-red"></span><span id="alertCount">0</span> alerts</span>
+    <span class="status-pill" id="dataModePill">● simulation</span>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <button class="nav-btn active" data-tab="dashboard" id="nav-dashboard">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </button>
+    <button class="nav-btn" data-tab="intelligence" id="nav-intelligence">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="m4.93 4.93 2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg>
+      Causal AI
+    </button>
+    <button class="nav-btn" data-tab="topology" id="nav-topology">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h10M19 7v10"/></svg>
+      Topology
+    </button>
+    <button class="nav-btn" data-tab="diagnosis" id="nav-diagnosis">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+      Diagnosis
+    </button>
+    <button class="nav-btn" data-tab="wireless" id="nav-wireless">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+      Wireless RL
+    </button>
+    <button class="nav-btn" data-tab="audit" id="nav-audit">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Audit Trail
+    </button>
+    <button class="nav-btn" data-tab="datasources" id="nav-datasources">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      Data Sources
+    </button>
+  </nav>
+
+  <!-- Main content -->
+  <main class="content">
+    <div id="tabExplainInline" class="explain-inline"></div>
+
+    <!-- ── DASHBOARD TAB ── -->
+    <section class="tab active" id="tab-dashboard">
+      <div class="tab-header">
+        <h1>System Overview</h1>
+        <div class="tab-actions">
+          <button class="btn-secondary" id="btnTick">⚡ Tick</button>
+          <button class="btn-primary" id="btnRefresh">↺ Refresh</button>
+          <a href="/twin" class="btn-secondary">🌐 3D Twin</a>
+        </div>
       </div>
-      <div class="orb-wrap">
-        <div class="orb"><span></span><span></span><span></span></div>
+
+      <!-- KPI Cards -->
+      <div class="kpi-row">
+        <div class="kpi-card" id="kpi-prob">
+          <div class="kpi-ring-wrap">
+            <svg class="kpi-ring" viewBox="0 0 80 80">
+              <circle cx="40" cy="40" r="34" class="ring-bg"/>
+              <circle cx="40" cy="40" r="34" class="ring-fg" id="ring-prob" style="--pct:0"/>
+            </svg>
+            <span class="kpi-val" id="kpiProb">--</span>
+          </div>
+          <div class="kpi-label">Fault Probability</div>
+          <div class="kpi-sub" id="kpiProbSub">No alert yet</div>
+        </div>
+        <div class="kpi-card" id="kpi-auc">
+          <div class="kpi-ring-wrap">
+            <svg class="kpi-ring" viewBox="0 0 80 80">
+              <circle cx="40" cy="40" r="34" class="ring-bg"/>
+              <circle cx="40" cy="40" r="34" class="ring-fg ring-purple" id="ring-auc" style="--pct:0"/>
+            </svg>
+            <span class="kpi-val" id="kpiAUC">--</span>
+          </div>
+          <div class="kpi-label">Prediction AUC</div>
+          <div class="kpi-sub" id="kpiAUCSub">Causal GRU</div>
+        </div>
+        <div class="kpi-card" id="kpi-conf">
+          <div class="kpi-ring-wrap">
+            <svg class="kpi-ring" viewBox="0 0 80 80">
+              <circle cx="40" cy="40" r="34" class="ring-bg"/>
+              <circle cx="40" cy="40" r="34" class="ring-fg ring-green" id="ring-conf" style="--pct:0"/>
+            </svg>
+            <span class="kpi-val" id="kpiConf">--</span>
+          </div>
+          <div class="kpi-label">LLM Confidence</div>
+          <div class="kpi-sub">Multi-agent vote</div>
+        </div>
+        <div class="kpi-card" id="kpi-rem">
+          <div class="kpi-icon-wrap">
+            <span class="kpi-icon" id="kpiRemIcon">⏸</span>
+          </div>
+          <div class="kpi-val-text" id="kpiRem">--</div>
+          <div class="kpi-label">Remediation</div>
+          <div class="kpi-sub" id="kpiRemSub">Risk-gated</div>
+        </div>
+      </div>
+
+      <div class="panel command-panel">
+        <div class="panel-header">
+          <h2>Proactive Fault Avoidance</h2>
+          <span class="badge-muted">multi-horizon forecast</span>
+        </div>
+        <div id="proactivePanel" class="proactive-panel">
+          <div class="empty-state">Collecting telemetry for proactive forecast.</div>
+        </div>
+        <div class="tab-actions realtime-actions">
+          <button class="btn-primary" id="btnRealtimeAnalyse">Analyse Core Stream</button>
+          <button class="btn-secondary" id="btnSimulateFix">Simulate Best Fix</button>
+          <button class="btn-secondary" id="btnOpen5gsDemo">Refresh Open5GS Core</button>
+        </div>
+        <div id="realtimePanel" class="realtime-panel">
+          <div class="empty-state">Open5GS is the core real-time source. If WSL/Open5GS is offline, NetOracle keeps the trained Open5GS-shaped fallback stream alive.</div>
+        </div>
+      </div>
+
+      <!-- Telemetry Chart -->
+      <div class="panel glass-panel">
+        <div class="panel-header">
+          <h2>Live Telemetry Pulse <span class="live-badge" id="liveBadge">● LIVE</span></h2>
+          <div class="legend-row">
+            <span class="leg cyan">━ Latency</span>
+            <span class="leg purple">━ CPU</span>
+            <span class="leg red">━ Packet Loss</span>
+            <span class="leg green">━ PRB Util</span>
+          </div>
+        </div>
+        <div id="telemetryChart" class="chart-area"></div>
+      </div>
+
+      <!-- Two-column: DAG + Alerts -->
+      <div class="two-col">
+        <div class="panel glass-panel">
+          <div class="panel-header">
+            <h2>Causal DAG <span class="badge-muted">federated</span></h2>
+          </div>
+          <div id="dagMini" class="graph-area"></div>
+        </div>
+        <div class="panel glass-panel">
+          <div class="panel-header">
+            <h2>Active Alerts <span class="badge-muted" id="alertsHeaderCount">0</span></h2>
+          </div>
+          <div id="alertFeed" class="alert-feed">
+            <div class="empty-state">No alerts yet — system nominal</div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="controls glass">
-      <div class="control-grid">
-        <label>Slice<select id="slice"><option>slice_1</option><option>slice_2</option><option>slice_3</option></select></label>
-        <label>Node<select id="node"><option>upf_1</option><option>gnb_1</option><option>router_1</option><option>app_1</option><option>upf_2</option><option>upf_3</option></select></label>
-        <label>Fault<select id="fault"><option>congestion</option><option>cpu_overload</option><option>packet_loss</option><option>vnf_degradation</option><option>latency_spike</option></select></label>
-        <label>Severity<input id="severity" type="range" min="0.2" max="1" step="0.05" value="0.85" /></label>
+    <!-- ── CAUSAL AI TAB ── -->
+    <section class="tab" id="tab-intelligence">
+      <div class="tab-header">
+        <h1>Causal Intelligence Engine</h1>
+        <div class="tab-actions">
+          <select id="dagSlice" class="select-input">
+            <option value="all">All Slices (Federated)</option>
+            <option value="slice_1">Slice 1 — eMBB</option>
+            <option value="slice_2">Slice 2 — mMTC</option>
+            <option value="slice_3">Slice 3 — URLLC</option>
+          </select>
+          <button class="btn-primary" id="btnRefreshDAG">Refresh DAG</button>
+        </div>
       </div>
-      <div class="actions">
-        <button id="runDemo">Run closed-loop demo</button>
-        <button id="tick" class="secondary">Generate telemetry tick</button>
-        <button id="refresh" class="secondary">Refresh</button>
-        <a class="secondary link-button" href="/twin">Open 3D digital twin</a>
-        <button id="runBenchmark" class="secondary">Run benchmark</button>
-        <button id="runHopfield" class="secondary">Hopfield allocator</button>
-        <button id="exportCloud" class="secondary">Export report/cloud</button>
+      <div class="panel glass-panel tall">
+        <div class="panel-header">
+          <h2>NOTEARS Causal DAG <span class="badge-muted">drag nodes</span></h2>
+          <span class="kpi-sub" id="dagEdgeCount">0 causal edges</span>
+        </div>
+        <div id="dagFull" class="graph-area tall-graph"></div>
       </div>
-    </section>
-
-    <section class="controls glass">
-      <div class="panel-head"><h2>User Network Data Input</h2><span>CSV/JSON telemetry and JSON topology upload</span></div>
-      <div class="control-grid">
-        <label>Telemetry CSV/JSON<input id="telemetryFile" type="file" accept=".csv,.json" /></label>
-        <label>Topology JSON<input id="topologyFile" type="file" accept=".json" /></label>
-        <label>Benchmark scenarios<input id="benchmarkScenarios" type="number" min="10" max="300" value="60" /></label>
-        <label>RL reward<input id="rlReward" type="number" min="-1" max="1" step="0.1" value="0.8" /></label>
-      </div>
-      <div class="actions">
-        <button id="uploadTelemetry">Upload telemetry</button>
-        <button id="uploadTopology" class="secondary">Upload topology</button>
-        <button id="analyseUploaded" class="secondary">Analyse uploaded data</button>
-        <button id="showPolicy" class="secondary">Show RL policy</button>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Benchmark Evaluation</h2></div>
+        <div class="bench-controls">
+          <label>Scenarios <input type="number" id="benchScenarios" value="60" min="10" max="300" class="num-input"/></label>
+          <button class="btn-primary" id="btnBenchmark">Run Benchmark</button>
+        </div>
+        <div class="terminal narrative-output" id="benchOutput">Click "Run Benchmark" to evaluate CTGNN vs. baselines.</div>
       </div>
     </section>
 
-    <section class="grid metrics">
-      <article class="card"><span>Fault Probability</span><strong id="probability">--</strong><small id="horizon">No alert yet</small></article>
-      <article class="card"><span>Prediction AUC Proxy</span><strong id="auc">--</strong><small id="aucLabel">Causal attention GRU</small></article>
-      <article class="card"><span>Diagnosis Confidence</span><strong id="confidence">--</strong><small>Multi-agent vote</small></article>
-      <article class="card"><span>Remediation</span><strong id="remediation">--</strong><small id="remLabel">Risk-gated action</small></article>
+    <!-- ── TOPOLOGY TAB ── -->
+    <section class="tab" id="tab-topology">
+      <div class="tab-header">
+        <h1>Network Topology Graph</h1>
+        <div class="tab-actions">
+          <button class="btn-secondary" id="btnTopologyRefresh">↺ Refresh</button>
+        </div>
+      </div>
+      <div class="panel glass-panel tall">
+        <div class="panel-header">
+          <h2>Property Graph — Neo4j Compatible Schema</h2>
+          <span class="kpi-sub">Click a node to inspect</span>
+        </div>
+        <div id="topoGraph" class="graph-area tall-graph"></div>
+      </div>
+      <div class="two-col">
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>NL Query <span class="badge-muted">NL-to-Cypher</span></h2></div>
+          <div class="nl-row">
+            <input id="question" class="nl-input" value="Which VNFs are connected to Slice 1?"/>
+            <button class="btn-primary" id="btnAsk">Ask</button>
+          </div>
+          <div class="terminal narrative-output" id="nlAnswer">Ask a graph question to see an answer, Cypher trace, confidence, and matched topology entities.</div>
+        </div>
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Node Inspector</h2></div>
+          <div id="nodeInspector" class="inspector">
+            <div class="empty-state">Click a topology node to inspect it</div>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section class="workspace">
-      <article class="panel glass wide">
-        <div class="panel-head"><h2>Telemetry Pulse</h2><span>live synthetic 5G fabric</span></div>
-        <canvas id="telemetryChart" width="900" height="280"></canvas>
-      </article>
-      <article class="panel glass">
-        <div class="panel-head"><h2>Causal DAG</h2><span>federated edge voting</span></div>
-        <div id="dag" class="network"></div>
-      </article>
-      <article class="panel glass">
-        <div class="panel-head"><h2>Topology Localisation</h2><span>property graph path</span></div>
-        <div id="topology" class="network"></div>
-      </article>
-      <article class="panel glass wide">
-        <div class="panel-head"><h2>Diagnosis Console</h2><span>RAG + LLM ensemble</span></div>
-        <pre id="diagnosis">Run a demo to see graph-grounded diagnosis.</pre>
-      </article>
-      <article class="panel glass wide">
-        <div class="panel-head"><h2>Ask the Network Graph</h2><span>NL-to-Cypher</span></div>
-        <div class="query-row"><input id="question" value="Which VNFs are connected to Slice 1?" /><button id="ask">Ask</button></div>
-        <pre id="answer">Cypher output will appear here.</pre>
-      </article>
-      <article class="panel glass wide">
-        <div class="panel-head"><h2>Benchmarks, Cloud, RL, Wireless</h2><span>evaluation and adaptive control</span></div>
-        <pre id="opsOutput">Run benchmarks, Hopfield allocation, cloud export, or inspect RL policy here.</pre>
-      </article>
-      <article class="panel glass">
-        <div class="panel-head"><h2>Audit Trail</h2><span>explainable control loop</span></div>
-        <div id="audit" class="audit"></div>
-      </article>
+    <!-- ── DIAGNOSIS TAB ── -->
+    <section class="tab" id="tab-diagnosis">
+      <div class="tab-header">
+        <h1>Fault Injection &amp; Diagnosis</h1>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Fault Control</h2></div>
+        <div class="fault-grid">
+          <label class="field-label">Slice
+            <select id="slice" class="select-input">
+              <option>slice_1</option><option>slice_2</option><option>slice_3</option>
+            </select>
+          </label>
+          <label class="field-label">Node
+            <select id="node" class="select-input">
+              <option>upf_1</option><option>gnb_1</option><option>router_1</option>
+              <option>app_1</option><option>upf_2</option><option>upf_3</option>
+              <option>amf_1</option><option>smf_1</option>
+            </select>
+          </label>
+          <label class="field-label">Fault Type
+            <select id="fault" class="select-input">
+              <option>congestion</option><option>cpu_overload</option><option>packet_loss</option>
+              <option>vnf_degradation</option><option>latency_spike</option>
+              <option>link_failure</option><option>memory_leak</option>
+            </select>
+          </label>
+          <label class="field-label">Severity <span id="sevVal">0.85</span>
+            <input id="severity" type="range" min="0.2" max="1" step="0.05" value="0.85" class="slider-input"/>
+          </label>
+        </div>
+        <div class="tab-actions" style="margin-top:16px">
+          <button class="btn-primary" id="runDemo">⚡ Run Closed-Loop Demo</button>
+          <button class="btn-secondary" id="runInject">Inject Fault Only</button>
+        </div>
+      </div>
+
+      <!-- Results panels -->
+      <div id="diagResults" style="display:none">
+        <div class="specialist-row" id="specialistCards"></div>
+        <div class="two-col">
+          <div class="panel glass-panel">
+            <div class="panel-header"><h2>Alert</h2></div>
+            <div id="alertCard" class="info-card"></div>
+          </div>
+          <div class="panel glass-panel">
+            <div class="panel-header"><h2>Remediation</h2></div>
+            <div id="remCard" class="info-card"></div>
+          </div>
+        </div>
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Explainable Diagnosis Timeline</h2></div>
+          <div class="terminal narrative-output" id="diagnosis">Run a demo to see graph-grounded diagnosis.</div>
+        </div>
+      </div>
+      <div id="diagPlaceholder" class="panel glass-panel">
+        <div class="empty-state big-empty">⚡ Configure fault parameters above and click "Run Closed-Loop Demo"</div>
+      </div>
     </section>
+
+    <!-- ── WIRELESS + RL TAB ── -->
+    <section class="tab" id="tab-wireless">
+      <div class="tab-header">
+        <h1>Wireless Allocation &amp; RL Policy</h1>
+      </div>
+      <div class="two-col">
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Hopfield Allocator</h2></div>
+          <div class="bench-controls">
+            <label class="field-label">Users <input type="number" id="hopUsers" value="8" min="2" max="32" class="num-input"/></label>
+            <label class="field-label">Channels <input type="number" id="hopCh" value="16" min="4" max="64" class="num-input"/></label>
+            <button class="btn-primary" id="btnHopfield">Run Allocator</button>
+          </div>
+          <div id="hopfieldViz" class="hopfield-grid"></div>
+          <div class="terminal narrative-output" id="hopOutput">Allocator interpretation will appear here.</div>
+        </div>
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>RL Policy (CMDP)</h2></div>
+          <button class="btn-secondary" id="btnPolicy">Show Policy State</button>
+          <div class="terminal narrative-output" id="policyOutput">Policy interpretation will appear here.</div>
+        </div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Save Report</h2></div>
+        <div class="tab-actions">
+          <button class="btn-primary" id="btnExportAudit">💾 Export Audit Report</button>
+          <button class="btn-secondary" id="btnExportBench">💾 Export Benchmark Report</button>
+        </div>
+        <div class="terminal narrative-output" id="exportOutput">Export results will appear here.</div>
+      </div>
+    </section>
+
+    <!-- ── AUDIT TAB ── -->
+    <section class="tab" id="tab-audit">
+      <div class="tab-header">
+        <h1>Audit Trail</h1>
+        <div class="tab-actions">
+          <select id="auditFilter" class="select-input">
+            <option value="">All Events</option>
+            <option value="fault_predicted">Predictions</option>
+            <option value="fault_localised">Localisations</option>
+            <option value="fault_diagnosed">Diagnoses</option>
+            <option value="remediation_decision">Remediations</option>
+          </select>
+        </div>
+      </div>
+      <div class="panel glass-panel" style="min-height:600px">
+        <div id="auditTimeline" class="audit-timeline"></div>
+      </div>
+    </section>
+
+    <!-- ── DATA SOURCES TAB ── -->
+    <section class="tab" id="tab-datasources">
+      <div class="tab-header">
+        <h1>Data Sources</h1>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Current Mode</h2></div>
+        <div id="dataModeInfo" class="info-card">Loading…</div>
+        <div class="tab-actions" style="margin-top:16px">
+          <button class="btn-primary" onclick="switchMode('open5gs')">Open5GS Real-Time Core</button>
+          <button class="btn-secondary" onclick="switchMode('simulation')">Fallback Simulation</button>
+          <button class="btn-secondary" onclick="switchMode('csv_stream')">CSV Stream</button>
+          <button class="btn-secondary" onclick="switchMode('prometheus')">Prometheus</button>
+          <button class="btn-secondary" onclick="runOpen5gsDemo()">Analyse Open5GS Now</button>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Upload Telemetry CSV/JSON</h2></div>
+          <input id="telemetryFile" type="file" accept=".csv,.json" class="file-input"/>
+          <button class="btn-primary" id="btnUploadTel" style="margin-top:10px">Upload Telemetry</button>
+          <div class="terminal narrative-output" id="uploadOutput">Upload interpretation appears here.</div>
+        </div>
+        <div class="panel glass-panel">
+          <div class="panel-header"><h2>Upload Topology JSON</h2></div>
+          <input id="topologyFile" type="file" accept=".json" class="file-input"/>
+          <button class="btn-primary" id="btnUploadTopo" style="margin-top:10px">Upload Topology</button>
+          <button class="btn-secondary" id="btnAnalyse" style="margin-top:8px">Analyse Uploaded Data</button>
+        </div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Schema Reference</h2></div>
+        <pre class="terminal">timestamp,slice_id,node_id,node_type,cpu,memory,latency_ms,packet_loss,throughput_mbps,prb_utilization,fault_label,fault_type
+2026-05-10T10:00:00Z,slice_1,upf_1,UPF,52,58,24,0.006,860,0.55,0,
+2026-05-10T10:00:05Z,slice_1,upf_1,UPF,88,72,145,0.12,320,0.91,1,congestion</pre>
+      </div>
+    </section>
+
   </main>
-  <script src="/static/app.js"></script>
+</div>
+
+<!-- Onboarding Modal -->
+<div id="onboardModal" class="modal-overlay" style="display:none">
+  <div class="modal-box glass-panel">
+    <div class="modal-icon">🛰️</div>
+    <h2>Welcome to NetOracle</h2>
+    <p>A no-Docker federated causal fault intelligence platform for 5G networks.</p>
+    <ul class="modal-list">
+      <li>🔴 <strong>Dashboard</strong> — Live telemetry + causal DAG</li>
+      <li>🧠 <strong>Causal AI</strong> — NOTEARS DAG + CTGNN benchmarks</li>
+      <li>🕸️ <strong>Topology</strong> — Property graph + NL-to-Cypher</li>
+      <li>⚡ <strong>Diagnosis</strong> — Inject faults, run closed-loop demo</li>
+      <li>📡 <strong>Data Sources</strong> — Open5GS real-time core with trained fallback modes</li>
+    </ul>
+    <p class="modal-note">Default source is <strong>Open5GS real-time core</strong>; fallback streams remain available for offline demos.</p>
+    <button class="btn-primary" id="btnOnboardOk">Got it — Launch Dashboard</button>
+  </div>
+</div>
+
+<!-- XAI Panel -->
+<div class="xai-panel" id="xaiPanel">
+  <div class="xai-header">
+    <span class="xai-icon">✨</span>
+    <h3>XAI Insights</h3>
+    <button class="xai-close" id="btnCloseXai">×</button>
+  </div>
+  <div class="xai-body" id="xaiBody">
+    <p>Explanation will appear here.</p>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
 </body>
 </html>

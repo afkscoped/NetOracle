@@ -94,6 +94,14 @@ class TelemetryService:
         db.audit("telemetry_tick", {"frames": len(frames), "fault": fault, "source": source})
         return frames
 
+    def ingest_external_frames(self, raw_frames: list[dict[str, Any]], audit_event: str = "external_telemetry_tick") -> list[dict[str, Any]]:
+        frames = [self._normalise_frame(frame) for frame in raw_frames]
+        for frame in frames:
+            db.insert_telemetry(frame)
+        source = frames[0].get("source", "unknown") if frames else "unknown"
+        db.audit(audit_event, {"frames": len(frames), "source": source})
+        return frames
+
     def warm_start(self, ticks: int = 20) -> None:
         if db.fetch_one("SELECT id FROM telemetry LIMIT 1"):
             return

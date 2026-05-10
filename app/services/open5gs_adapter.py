@@ -80,10 +80,10 @@ OPEN5GS_METRICS = {
  
 # NF port assignments (match your Open5GS config)
 NF_PROMETHEUS_PORTS = {
-    "amf": 9090,
-    "smf": 9091,
-    "upf": 9092,
-    "pcf": 9093,
+    "amf": 9095,
+    "smf": 9096,
+    "upf": 9097,
+    "pcf": 9098,
 }
  
 # NetOracle node definitions for each Open5GS NF

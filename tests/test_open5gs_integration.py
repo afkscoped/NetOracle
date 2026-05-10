@@ -57,11 +57,14 @@ def test_telemetry_normalizes_flat_open5gs_metrics():
 def test_data_mode_and_open5gs_health_endpoints(client):
     mode = client.get("/api/data/mode")
     assert mode.status_code == 200
-    assert "mode" in mode.json()
+    body = mode.json()
+    assert "mode" in body.get("data", body)  # mode is inside data envelope
  
     health = client.get("/api/open5gs/health")
     assert health.status_code == 200
-    assert "nfs" in health.json() or "message" in health.json()
+    hbody = health.json()
+    health_data = hbody.get("data", hbody)
+    assert "nfs" in health_data or "message" in health_data
 
 
 def test_websocket_telemetry_receives_tick(client):

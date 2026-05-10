@@ -24,6 +24,7 @@ except ImportError:
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent.parent / "artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "ctgnn_t4_best.pt"
+MODEL_PATH_MLP = ARTIFACTS_DIR / "models" / "ctgnn_best.pt"
 NORM_STATS_PATH = ARTIFACTS_DIR / "norm_stats.json"
 
 # Metric names must match training exactly
@@ -31,6 +32,19 @@ METRICS = ["cpu", "memory", "latency_ms", "packet_loss", "throughput_mbps", "prb
 
 
 if TORCH_AVAILABLE:
+    class ProactiveMLP(nn.Module):
+        def __init__(self, in_dim: int = 6, hidden: int = 96):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, hidden), nn.LayerNorm(hidden), nn.GELU(), nn.Dropout(0.12),
+                nn.Linear(hidden, hidden // 2), nn.GELU(), nn.Linear(hidden // 2, 1),
+            )
+        def forward(self, x: "torch.Tensor") -> tuple["torch.Tensor", "torch.Tensor"]:
+            if x.dim() == 3:
+                x = x[:, -1, :]
+            logits = self.net(x).view(-1)
+            return logits, torch.zeros(x.size(0), x.size(1) if x.dim() == 2 else 1, device=x.device)
+
     class CausalAttentionGRU(nn.Module):
         """Exact replica of the training architecture for state_dict loading."""
 
@@ -85,36 +99,51 @@ def load_ctgnn_model() -> tuple[Any, dict[str, Any], bool]:
         logger.info("PyTorch not available — model not loaded")
         return None, {}, False
 
-    if not MODEL_PATH.exists():
-        logger.warning(f"Model file not found at {MODEL_PATH}")
-        return None, {}, False
+    paths = [MODEL_PATH, MODEL_PATH_MLP]
+    # Prefer most recently trained artifact (by modification time)
+    paths = sorted([p for p in paths if p.exists()], key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in paths:
+        try:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            checkpoint = torch.load(p, map_location=device, weights_only=False)
+            arch = checkpoint.get("architecture", "")
+            # Infer hidden_dim from weight shapes if not explicitly saved
+            hidden_dim = checkpoint.get("hidden_dim", 96)
+            state_dict = checkpoint["model_state_dict"]
+            if "net.0.weight" in state_dict:
+                # ProactiveMLP: net.0.weight has shape [hidden, in_dim]
+                hidden_dim = state_dict["net.0.weight"].shape[0]
+            elif "gru.weight_ih_l0" in state_dict:
+                # CausalAttentionGRU: gru hidden is weight shape / 3
+                hidden_dim = state_dict["gru.weight_ih_l0"].shape[0] // 3
 
-    try:
-        checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
-
-        feature_dim = checkpoint.get("feature_dim", 6)
-        hidden_dim = checkpoint.get("hidden_dim", 96)
-        dropout = checkpoint.get("dropout", 0.15)
-
-        model = CausalAttentionGRU(feature_dim=feature_dim, hidden_dim=hidden_dim, dropout=dropout)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        model.eval()
-
-        metadata = {
-            "auc": checkpoint.get("auc", 0.0),
-            "window": checkpoint.get("window", 12),
-            "horizon": checkpoint.get("horizon", 20),
-            "feature_dim": feature_dim,
-            "hidden_dim": hidden_dim,
-            "metrics": checkpoint.get("metrics", METRICS),
-        }
-
-        logger.info(f"CTGNN loaded: AUC={metadata['auc']:.4f}, window={metadata['window']}")
-        return model, metadata, True
-
-    except Exception as e:
-        logger.error(f"Failed to load CTGNN model: {e}")
-        return None, {}, False
+            if "ProactiveMLP" in arch or "net.0.weight" in state_dict:
+                model = ProactiveMLP(len(METRICS), hidden_dim)
+            else:
+                model = CausalAttentionGRU(
+                    feature_dim=checkpoint.get("feature_dim", 6),
+                    hidden_dim=hidden_dim,
+                    dropout=checkpoint.get("dropout", 0.15),
+                )
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.to(device)
+            model.eval()
+            metadata = {
+                "auc": checkpoint.get("auc", 0.0),
+                "window": checkpoint.get("window", 12),
+                "horizon": checkpoint.get("horizon", 20),
+                "feature_dim": checkpoint.get("feature_dim", 6),
+                "hidden_dim": checkpoint.get("hidden_dim", 96),
+                "metrics": checkpoint.get("metrics", METRICS),
+                "architecture": arch or "CausalAttentionGRU",
+            }
+            logger.info(f"CTGNN loaded from {p.name}: AUC={metadata['auc']:.4f}, arch={metadata['architecture']}")
+            return model, metadata, True
+        except Exception as e:
+            logger.warning(f"Failed to load from {p}: {e}")
+            continue
+    logger.error("No compatible model artifact found.")
+    return None, {}, False
 
 
 def predict_with_model(
@@ -153,7 +182,8 @@ def predict_with_model(
                 row.append(normalized)
             features.append(row)
 
-        x = torch.tensor([features], dtype=torch.float32)  # [1, window, 6]
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        x = torch.tensor([features], dtype=torch.float32).to(device)  # [1, window, 6]
 
         with torch.no_grad():
             logits, attention_weights = model(x)

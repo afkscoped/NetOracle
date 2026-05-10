@@ -101,6 +101,75 @@ class GraphService:
     def topology(self) -> dict[str, Any]:
         return {"nodes": self.nodes(), "edges": self.edges()}
 
+    def sync_from_telemetry(self, frames: list[dict[str, Any]], origin: str = "adaptive_data_twin") -> dict[str, Any]:
+        """
+        Infer a clean demo topology from telemetry identities so uploaded or generated
+        datasets can reshape the whole product without requiring a separate topology file.
+        """
+        if not frames:
+            return {"nodes_upserted": 0, "edges_upserted": 0, "message": "No telemetry frames supplied."}
+
+        # Remove the previous inferred topology while preserving hand-seeded or uploaded graph data.
+        db.execute("DELETE FROM topology_edges WHERE properties_json LIKE ?", (f'%"{origin}"%',))
+        db.execute("DELETE FROM topology_nodes WHERE properties_json LIKE ?", (f'%"{origin}"%',))
+
+        node_by_id: dict[str, dict[str, Any]] = {}
+        slice_nodes: set[str] = set()
+        by_slice: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for frame in frames:
+            slice_id = str(frame.get("slice_id") or "slice_1")
+            node_id = str(frame.get("node_id") or "unknown_node")
+            node_type = str(frame.get("node_type") or "Unknown")
+            slice_nodes.add(slice_id)
+            if node_id not in node_by_id:
+                node_by_id[node_id] = {
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "label": node_id.replace("_", " ").upper(),
+                    "properties": {
+                        "origin": origin,
+                        "slice_id": slice_id,
+                        "telemetry_rows": 0,
+                    },
+                }
+            node_by_id[node_id]["properties"]["telemetry_rows"] += 1
+            by_slice[slice_id].append(node_by_id[node_id])
+
+        for slice_id in slice_nodes:
+            node_by_id.setdefault(slice_id, {
+                "node_id": slice_id,
+                "node_type": "Slice",
+                "label": slice_id.replace("_", " ").upper(),
+                "properties": {"origin": origin, "telemetry_rows": 0},
+            })
+
+        type_rank = {"Slice": 0, "gNB": 1, "AMF": 2, "SMF": 3, "UPF": 4, "Router": 5, "Service": 6}
+        edge_keys: set[tuple[str, str, str]] = set()
+        for slice_id, nodes in by_slice.items():
+            unique_nodes = {node["node_id"]: node for node in nodes}.values()
+            ordered = sorted(unique_nodes, key=lambda n: (type_rank.get(n["node_type"], 50), n["node_id"]))
+            previous = slice_id
+            for node in ordered:
+                relation = "USES" if previous == slice_id else "FEEDS"
+                edge_keys.add((previous, node["node_id"], relation))
+                previous = node["node_id"]
+
+        for node in node_by_id.values():
+            db.execute(
+                "INSERT OR REPLACE INTO topology_nodes(node_id, node_type, label, properties_json) VALUES (?, ?, ?, ?)",
+                (node["node_id"], node["node_type"], node["label"], encode(node["properties"])),
+            )
+        for source, target, relation in sorted(edge_keys):
+            if source == target:
+                continue
+            db.execute(
+                "INSERT INTO topology_edges(source_id, target_id, relation, properties_json) VALUES (?, ?, ?, ?)",
+                (source, target, relation, encode({"origin": origin, "weight": 1.0})),
+            )
+        summary = {"nodes_upserted": len(node_by_id), "edges_upserted": len(edge_keys), "origin": origin}
+        db.audit("adaptive_topology_synced", summary)
+        return summary
+
     def _adjacency(self) -> dict[str, list[tuple[str, str]]]:
         adjacency: dict[str, list[tuple[str, str]]] = {}
         for edge in self.edges():
@@ -592,7 +661,25 @@ class GraphService:
                 if score:
                     scored.append((score, node))
             result = [node for _, node in sorted(scored, key=lambda item: item[0], reverse=True)[:5]] or nodes[:5]
-        return {"cypher": cypher, "parameters": {"slice_id": slice_id, "node_id": node_id}, "result": result}
+        answer = ""
+        if "last fault" in q or "caused" in q or "root cause" in q:
+            diagnosis = next((item for item in result if item.get("event_type") == "fault_diagnosed"), None)
+            prediction = next((item for item in result if item.get("event_type") == "fault_predicted"), None)
+            payload = (diagnosis or prediction or {}).get("payload", {})
+            if diagnosis:
+                answer = (
+                    f"Last diagnosed fault: {payload.get('root_cause', 'root cause unavailable')} "
+                    f"with {round(float(payload.get('confidence', 0)) * 100)}% confidence. "
+                    f"Recommended action: {payload.get('recommended_action', 'review manually')}."
+                )
+            elif prediction:
+                answer = (
+                    f"Last predicted fault: {payload.get('fault_type', 'unknown fault')} on "
+                    f"{payload.get('node_id', 'unknown node')} at {round(float(payload.get('fault_probability', 0)) * 100)}% risk."
+                )
+            else:
+                answer = "No fault diagnosis has been recorded yet. Run a closed-loop demo or inject a fault first."
+        return {"cypher": cypher, "parameters": {"slice_id": slice_id, "node_id": node_id}, "result": result, "answer": answer}
 
     def nl_to_cypher(self, question: str) -> dict[str, Any]:
         self.seed()
@@ -657,6 +744,7 @@ Cypher: MATCH (s:Slice {id:'slice_1'})--(n) RETURN count(n)
             "method": method,
             "parameters": fallback["parameters"],
             "result": fallback["result"],
+            "answer": fallback.get("answer", ""),
             "confidence": 0.88 if method == "groq_llm" else 0.65,
         }
         db.audit("nl_to_cypher", payload)

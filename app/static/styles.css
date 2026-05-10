@@ -886,17 +886,18 @@ body {
   box-shadow: 0 0 12px rgba(0,245,255,.45);
 }
 
-.slice-checks {
+.smooth-selector {
   display: flex;
-  gap: 14px;
   flex-wrap: wrap;
   margin-top: 12px;
-  color: var(--muted);
-  font-weight: 700;
+  max-width: 280px;
 }
 
-.slice-checks input {
-  accent-color: var(--cyan);
+.answer-primary {
+  margin: 8px 0 10px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.55;
 }
 
 .data-preview {
@@ -1021,3 +1022,290 @@ body {
 
 .policy-table th { color: var(--cyan); }
 .policy-table .warn-row td { color: var(--amber); }
+
+/* ── Vaporwave / Outrun Override Layer ───────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
+
+:root {
+  --bg: #090014;
+  --bg2: #140026;
+  --panel: rgba(26, 16, 60, 0.82);
+  --panel2: rgba(14, 6, 36, 0.90);
+  --border: rgba(255, 0, 255, 0.28);
+  --border2: rgba(0, 255, 255, 0.26);
+  --text: #E0E0E0;
+  --muted: rgba(224,224,224,0.68);
+  --cyan: #00FFFF;
+  --purple: #FF00FF;
+  --pink: #FF00FF;
+  --amber: #FF9900;
+  --green: #00FF88;
+  --red: #FF3366;
+  --radius: 0;
+  --radius-lg: 0;
+  --font: 'Share Tech Mono', monospace;
+  --mono: 'Share Tech Mono', monospace;
+  --heading: 'Orbitron', sans-serif;
+}
+
+body {
+  font-family: var(--font);
+  letter-spacing: .02em;
+  background: #090014;
+}
+
+body::before {
+  background:
+    linear-gradient(rgba(18,16,20,0) 50%, rgba(0,0,0,0.28) 50%),
+    linear-gradient(90deg, rgba(255,0,0,0.04), rgba(0,255,0,0.015), rgba(0,0,255,0.04));
+  background-size: 100% 4px, 100% 100%;
+  z-index: 2000;
+  opacity: .9;
+}
+
+body::after {
+  background:
+    radial-gradient(circle at 78% 8%, rgba(255,153,0,.22), transparent 18%),
+    radial-gradient(circle at 86% 16%, rgba(255,0,255,.19), transparent 28%),
+    linear-gradient(transparent 95%, rgba(255,0,255,.28) 95%),
+    linear-gradient(90deg, transparent 95%, rgba(0,255,255,.18) 95%),
+    radial-gradient(circle at 15% 12%, rgba(0,255,255,.15), transparent 24%),
+    #090014;
+  background-size: auto, auto, 42px 42px, 42px 42px, auto, auto;
+  animation: outrunDrift 18s linear infinite;
+}
+
+@keyframes outrunDrift {
+  from { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+  to { background-position: 0 0, 0 0, 0 42px, 42px 0, 0 0, 0 0; }
+}
+
+.topbar,
+.sidebar,
+.glass-panel,
+.kpi-card,
+.modal-box,
+.xai-panel {
+  background: var(--panel);
+  border: 1px solid rgba(255,0,255,.30);
+  border-top: 2px solid var(--cyan);
+  border-radius: 0;
+  box-shadow: 0 0 28px rgba(0,255,255,.12), inset 0 0 0 1px rgba(255,255,255,.03);
+  backdrop-filter: blur(18px);
+}
+
+.topbar-title,
+.tab-header h1,
+.modal-box h2,
+.panel-header h2,
+.proof-headline,
+.explain-headline {
+  font-family: var(--heading);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.tab-header h1,
+.topbar-title,
+.proof-headline {
+  background: linear-gradient(90deg, #FF9900, #FF00FF, #00FFFF);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 16px rgba(255,0,255,.45));
+}
+
+.btn-primary,
+.btn-secondary,
+.nav-btn,
+.select-input,
+.num-input,
+.nl-input,
+.file-input {
+  border-radius: 0 !important;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.btn-primary,
+.btn-secondary {
+  position: relative;
+  transform: skewX(-12deg);
+  border: 2px solid var(--cyan);
+  background: transparent;
+  color: var(--cyan);
+  box-shadow: 0 0 14px rgba(0,255,255,.12);
+  transition: all .2s linear;
+}
+
+.btn-primary:hover,
+.btn-secondary:hover {
+  transform: skewX(0deg) translateY(-2px);
+  background: var(--cyan);
+  color: #050014;
+  box-shadow: 0 0 24px var(--cyan);
+}
+
+.btn-secondary {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+
+.btn-secondary:hover {
+  background: var(--purple);
+  color: white;
+  box-shadow: 0 0 24px var(--purple);
+}
+
+.nav-btn.active,
+.nav-btn:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  box-shadow: inset 4px 0 0 var(--purple), 0 0 18px rgba(0,255,255,.08);
+}
+
+.terminal,
+.narrative-output,
+pre,
+.math-panel,
+.summary-card {
+  border-radius: 0;
+  background: rgba(0,0,0,.62);
+  border: 1px solid rgba(0,255,255,.24);
+  box-shadow: inset 0 0 22px rgba(0,255,255,.04);
+}
+
+.metric-pill {
+  border-radius: 0;
+  border: 1px solid rgba(0,255,255,.24);
+  background: rgba(0,0,0,.36);
+}
+
+.metric-pill.good { color: var(--green); border-color: rgba(0,255,136,.35); }
+.metric-pill.warn { color: var(--amber); border-color: rgba(255,153,0,.42); }
+.metric-pill.bad { color: var(--red); border-color: rgba(255,51,102,.42); }
+
+.deep-dive,
+.button-guide,
+.glossary-grid,
+.question-chips,
+.comparison-table,
+.trilogy-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.guide-row,
+.compare-row,
+.trilogy-card,
+.action-compare {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: rgba(0,0,0,.38);
+  border: 1px solid rgba(255,0,255,.25);
+  border-top-color: rgba(0,255,255,.48);
+}
+
+.compare-row {
+  grid-template-columns: 180px 1fr 1fr;
+}
+
+.trilogy-grid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.trilogy-card b,
+.action-compare b,
+.guide-row b,
+.compare-row b {
+  color: var(--cyan);
+  font-family: var(--heading);
+}
+
+.question-chips {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.question-chips span {
+  border: 1px solid rgba(255,153,0,.38);
+  padding: 6px 9px;
+  color: var(--amber);
+  background: rgba(255,153,0,.06);
+}
+
+.glossary-grid details {
+  border: 1px solid rgba(0,255,255,.22);
+  padding: 8px 10px;
+  background: rgba(0,0,0,.28);
+}
+
+.glossary-grid summary {
+  color: var(--cyan);
+  cursor: pointer;
+}
+
+.risk-bars {
+  height: 12px;
+  background: rgba(255,255,255,.08);
+  position: relative;
+  overflow: hidden;
+}
+
+.risk-bars span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--w);
+  background: linear-gradient(90deg, var(--amber), var(--red));
+  box-shadow: 0 0 16px rgba(255,51,102,.35);
+}
+
+.risk-bars span.after {
+  top: 7px;
+  height: 5px;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+}
+
+.action-compare.approved {
+  border-color: rgba(0,255,136,.42);
+}
+
+.action-compare.blocked {
+  border-color: rgba(255,153,0,.42);
+}
+
+.twin-modal {
+  z-index: 1200;
+}
+
+.twin-modal-box {
+  width: min(1180px, 94vw);
+  max-width: none;
+  height: min(780px, 90vh);
+  padding: 16px;
+}
+
+#twinFrame {
+  width: 100%;
+  height: calc(100% - 54px);
+  border: 2px solid var(--cyan);
+  background: #090014;
+  box-shadow: 0 0 28px rgba(0,255,255,.18);
+}
+
+.hero-proof {
+  min-height: 520px;
+}
+
+@media (max-width: 820px) {
+  .compare-row {
+    grid-template-columns: 1fr;
+  }
+  .topbar-status {
+    max-width: 60vw;
+    overflow-x: auto;
+  }
+}

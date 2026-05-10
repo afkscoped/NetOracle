@@ -9,7 +9,7 @@ from typing import Any
  
 logger = logging.getLogger(__name__)
 
-from fastapi import Body, FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -427,6 +427,11 @@ def proactive_avoid() -> dict:
     return {"ok": True, "data": proactive_engine.avoid()}
 
 
+@app.get("/api/proactive/autopilot")
+def proactive_autopilot() -> dict:
+    return {"ok": True, "data": proactive_engine.compare_actions()}
+
+
 @app.get("/api/proactive/explain")
 def proactive_explain() -> dict:
     return {"ok": True, "data": explainability_service.latest_prediction_explanation()}
@@ -475,43 +480,49 @@ def training_export_retrain(payload: dict[str, Any] = Body(default={})) -> dict:
     import csv
     from pathlib import Path
 
-    # Step 1: Export telemetry to CSV
-    rows = db.latest_telemetry(int(payload.get("limit", 5000)))
-    if not rows:
-        return {"ok": False, "error": "No telemetry data in database to export."}
+    # Step 1: Use a generated/uploaded CSV if supplied; otherwise export current DB telemetry.
+    supplied_data = payload.get("data")
+    if supplied_data and Path(str(supplied_data)).exists():
+        export_path = Path(str(supplied_data))
+        export_result = {"rows_exported": "existing_file", "csv_path": str(export_path), "source": "supplied_dataset"}
+    else:
+        rows = db.latest_telemetry(int(payload.get("limit", 5000)))
+        if not rows:
+            return {"ok": False, "error": "No telemetry data in database to export."}
 
-    export_path = Path("data/exported_telemetry.csv")
-    export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path = Path("data/exported_telemetry.csv")
+        export_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fieldnames = [
-        "timestamp", "slice_id", "node_id", "node_type",
-        "cpu", "memory", "latency_ms", "packet_loss",
-        "throughput_mbps", "prb_utilization", "fault_label", "fault_type",
-    ]
-    with open(export_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            metrics = row.get("metrics", {})
-            writer.writerow({
-                "timestamp": row.get("timestamp", ""),
-                "slice_id": row.get("slice_id", ""),
-                "node_id": row.get("node_id", ""),
-                "node_type": row.get("node_type", ""),
-                "cpu": metrics.get("cpu", 0),
-                "memory": metrics.get("memory", 0),
-                "latency_ms": metrics.get("latency_ms", 0),
-                "packet_loss": metrics.get("packet_loss", 0),
-                "throughput_mbps": metrics.get("throughput_mbps", 0),
-                "prb_utilization": metrics.get("prb_utilization", 0),
-                "fault_label": row.get("fault_label", 0),
-                "fault_type": row.get("fault_type", ""),
-            })
+        fieldnames = [
+            "timestamp", "slice_id", "node_id", "node_type",
+            "cpu", "memory", "latency_ms", "packet_loss",
+            "throughput_mbps", "prb_utilization", "fault_label", "fault_type",
+        ]
+        with open(export_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                metrics = row.get("metrics", {})
+                writer.writerow({
+                    "timestamp": row.get("timestamp", ""),
+                    "slice_id": row.get("slice_id", ""),
+                    "node_id": row.get("node_id", ""),
+                    "node_type": row.get("node_type", ""),
+                    "cpu": metrics.get("cpu", 0),
+                    "memory": metrics.get("memory", 0),
+                    "latency_ms": metrics.get("latency_ms", 0),
+                    "packet_loss": metrics.get("packet_loss", 0),
+                    "throughput_mbps": metrics.get("throughput_mbps", 0),
+                    "prb_utilization": metrics.get("prb_utilization", 0),
+                    "fault_label": row.get("fault_label", 0),
+                    "fault_type": row.get("fault_type", ""),
+                })
 
-    export_result = {
-        "rows_exported": len(rows),
-        "csv_path": str(export_path),
-    }
+        export_result = {
+            "rows_exported": len(rows),
+            "csv_path": str(export_path),
+            "source": "database_export",
+        }
 
     # Step 2: Trigger retraining
     train_payload = {
@@ -537,6 +548,16 @@ def xai_prediction_latest() -> dict:
 @app.get("/api/datasets/registry")
 def datasets_registry() -> dict:
     return {"ok": True, "data": harmonizer_service.registry()}
+
+
+@app.get("/api/data/templates")
+def data_templates() -> dict:
+    return {"ok": True, "data": harmonizer_service.templates()}
+
+
+@app.get("/api/data/quality")
+def data_quality(limit: int = 1000) -> dict:
+    return {"ok": True, "data": harmonizer_service.quality_report(db.latest_telemetry(limit))}
 
 
 @app.post("/api/data/generate-synthetic")
@@ -573,16 +594,151 @@ def generate_synthetic_data(payload: dict[str, Any] = Body(default={})) -> dict:
             "source": row.get("source", "realistic_generator"),
         })
     telemetry_service.ingest_external_frames(frames, audit_event="realistic_synthetic_generated")
-    db.audit("synthetic_generation", {**summary, "output": str(output_path), "loaded_rows": len(frames)})
+    topology = graph_service.sync_from_telemetry(frames, origin="synthetic_data_twin")
+    db.audit("synthetic_generation", {**summary, "output": str(output_path), "loaded_rows": len(frames), "topology": topology})
     return {
         "ok": True,
         "data": {
             **summary,
             "output": str(output_path),
+            "download_url": f"/api/data/download?path={output_path.as_posix()}",
             "loaded_rows": len(frames),
+            "topology": topology,
             "preview": frames[:10],
+            "quality": harmonizer_service.quality_report(frames),
         },
     }
+
+
+@app.get("/api/data/download")
+def download_data(path: str = Query(...)) -> FileResponse:
+    requested = Path(path)
+    allowed_roots = [Path("data").resolve(), Path("reports").resolve(), Path("artifacts").resolve()]
+    resolved = requested.resolve()
+    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+        raise HTTPException(status_code=400, detail="Download path is outside the allowed project artifact folders.")
+    if not resolved.exists() or not resolved.is_file():
+        raise HTTPException(status_code=404, detail=str(resolved))
+    return FileResponse(resolved, filename=resolved.name)
+
+
+@app.get("/api/wireless/adaptive-plan")
+def wireless_adaptive_plan() -> dict:
+    recent = db.latest_telemetry(240)
+    users = max(4, min(32, len({row["node_id"] for row in recent}) or 8))
+    channels = max(8, min(64, users * 2))
+    allocation = wireless_optimizer_service.hopfield_allocate(users=users, channels=channels, iterations=80)
+    latest_alert = db.latest_alerts(1)
+    alert = latest_alert[0] if latest_alert else intelligence_service.predict_latest()
+    rl = adaptive_rl_service.recommend(
+        str(alert.get("fault_type", "congestion")) if alert else "congestion",
+        risk="low" if allocation.get("fairness_index", 0) >= 0.7 else "medium",
+        probability=float(alert.get("fault_probability", 0.55)) if alert else 0.55,
+        fairness_index=allocation.get("fairness_index"),
+        throughput_mbps=allocation.get("throughput_mbps"),
+    )
+    plan = {
+        "status": "adaptive_plan_ready",
+        "network_basis": {
+            "telemetry_rows": len(recent),
+            "active_nodes": users,
+            "channels_planned": channels,
+            "latest_fault": alert,
+        },
+        "allocation": allocation,
+        "rl_recommendation": rl,
+        "why_it_matters": [
+            "Wireless allocation is now tied to live topology and telemetry size instead of a detached toy input.",
+            "The CMDP policy receives the current fault context plus fairness and throughput evidence.",
+            "This creates a preventive radio-resource action before congestion becomes an SLA incident.",
+        ],
+    }
+    db.audit("wireless_adaptive_plan", plan)
+    return {"ok": True, "data": plan}
+
+
+@app.get("/api/executive/proof")
+def executive_proof() -> dict:
+    metrics = intelligence_service.metrics()
+    accuracy = intelligence_service.prediction_accuracy()
+    proactive = proactive_engine.latest()
+    autopilot = proactive_engine.compare_actions()
+    quality = harmonizer_service.quality_report(db.latest_telemetry(1000))
+    audit_entries = db.audit_entries(300)
+    audit_types = {entry.get("event_type") for entry in audit_entries}
+    benchmark_path = Path("reports/latest_benchmark.json")
+    benchmark = {}
+    if benchmark_path.exists():
+        with suppress(Exception):
+            import json
+            benchmark = json.loads(benchmark_path.read_text(encoding="utf-8"))
+    proof = {
+        "headline": "NetOracle is unique because it predicts, explains, safely prevents, adapts to new data, and proves every decision.",
+        "novel_feature": {
+            "name": "Adaptive Causal Data Twin",
+            "claim": "Generated or uploaded telemetry reshapes the graph, risk model inputs, XAI layer, benchmark evidence, and retraining handoff in one loop.",
+            "metric": "Topology freshness + data quality + preventive lead time + audit completeness",
+        },
+        "full_trilogy": [
+            {
+                "name": "Preventive Autopilot",
+                "proof": autopilot.get("executive_summary", "Autopilot is waiting for enough telemetry."),
+                "status": autopilot.get("status", "unknown"),
+            },
+            {
+                "name": "Adaptive Data Twin",
+                "proof": f"Current data quality score is {quality.get('quality_score', 0)} across {quality.get('rows', 0)} recent rows.",
+                "status": "ready" if quality.get("quality_score", 0) >= 0.65 else "needs_more_data",
+            },
+            {
+                "name": "Executive Proof Mode",
+                "proof": f"Audit ledger has {len(audit_entries)} recent events across {len(audit_types)} event types.",
+                "status": "ready",
+            },
+        ],
+        "comparison": [
+            {"capability": "Traditional threshold monitor", "legacy": "Detects after a metric crosses a limit.", "netoracle": "Forecasts T+5/T+10/T+20 risk before SLA damage."},
+            {"capability": "Static dashboard", "legacy": "Shows charts but not why they matter.", "netoracle": "Explains metrics, devices, causal paths, and safe next steps."},
+            {"capability": "Manual RCA", "legacy": "Operator manually searches logs and topology.", "netoracle": "Uses GraphRAG and MoE specialists grounded in topology and incident memory."},
+            {"capability": "Automation", "legacy": "Scripts can be unsafe or unaudited.", "netoracle": "CMDP safety gates block risky actions and log every decision."},
+            {"capability": "New network data", "legacy": "Requires custom dashboard/model work.", "netoracle": "Loads canonical telemetry/topology and re-runs prediction, graph, XAI, and training flows."},
+        ],
+        "hackathon_metrics": [
+            {"metric": "Preventive lead time", "why_unique": "Shows minutes gained before an SLA breach instead of post-fault detection."},
+            {"metric": "Topology freshness", "why_unique": "Scores whether the digital twin reflects the current uploaded/generated network."},
+            {"metric": "Causal support ratio", "why_unique": "Measures how much of each diagnosis is backed by causal edges and graph paths."},
+            {"metric": "Safe autonomy rate", "why_unique": "Counts actions that pass CMDP gates rather than blindly executing scripts."},
+            {"metric": "Adaptation latency", "why_unique": "Time from new data ingestion to updated topology, forecast, explanation, and training artifact."},
+        ],
+        "evidence": {
+            "model": metrics,
+            "prediction_accuracy": accuracy,
+            "proactive": proactive,
+            "data_quality": quality,
+            "benchmark": benchmark,
+            "audit_event_types": sorted(str(item) for item in audit_types if item),
+        },
+        "talk_track": [
+            "NetOracle is not a Grafana clone; it is a preventive network fault intelligence loop.",
+            "It combines causal discovery, temporal prediction, topology localisation, LLM diagnosis, safe RL remediation, and audit evidence.",
+            "The same UI can adapt to generated, uploaded, CSV-streamed, Prometheus, or Open5GS-shaped telemetry.",
+        ],
+    }
+    return {"ok": True, "data": proof}
+
+
+@app.get("/api/groq/health")
+def groq_health() -> dict:
+    settings = get_settings()
+    configured = bool(settings.groq_api_key)
+    if not configured:
+        return {"ok": True, "data": {"configured": False, "reachable": False, "message": "GROQ_API_KEY is not configured."}}
+    try:
+        from app.services.rag_llm import call_llm
+        result = call_llm('Return JSON only: {"status":"ok","purpose":"netoracle_health_check"}')
+        return {"ok": True, "data": {"configured": True, "reachable": bool(result), "model": result.get("_model") if isinstance(result, dict) else None}}
+    except Exception as exc:
+        return {"ok": True, "data": {"configured": True, "reachable": False, "error": str(exc)}}
 
 
 @app.get("/api/metrics/prediction-accuracy")

@@ -88,8 +88,9 @@ class IngestionService:
         frames = self.parse_telemetry_text(content, filename)
         for frame in frames:
             db.insert_telemetry(frame)
-        db.audit("telemetry_uploaded", {"filename": filename, "frames": len(frames)})
-        return {"filename": filename, "frames_ingested": len(frames), "sample": frames[:3]}
+        topology = graph_service.sync_from_telemetry(frames, origin="uploaded_data_twin")
+        db.audit("telemetry_uploaded", {"filename": filename, "frames": len(frames), "topology": topology})
+        return {"filename": filename, "frames_ingested": len(frames), "sample": frames[:3], "topology": topology}
 
     def ingest_telemetry_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
         frame = self._normalise_json_record(payload)
@@ -100,24 +101,30 @@ class IngestionService:
         payload = json.loads(content)
         nodes = payload.get("nodes", [])
         edges = payload.get("edges", [])
+        db.execute("DELETE FROM topology_edges WHERE properties_json LIKE ?", ('%"uploaded_topology"%',))
+        db.execute("DELETE FROM topology_nodes WHERE properties_json LIKE ?", ('%"uploaded_topology"%',))
         for node in nodes:
+            props = dict(node.get("properties", {}))
+            props["origin"] = "uploaded_topology"
             db.execute(
                 "INSERT OR REPLACE INTO topology_nodes(node_id, node_type, label, properties_json) VALUES (?, ?, ?, ?)",
                 (
                     str(node.get("node_id") or node.get("id")),
                     str(node.get("node_type") or node.get("type") or "Unknown"),
                     str(node.get("label") or node.get("node_id") or node.get("id")),
-                    json.dumps(node.get("properties", {})),
+                    json.dumps(props),
                 ),
             )
         for edge in edges:
+            props = dict(edge.get("properties", {}))
+            props["origin"] = "uploaded_topology"
             db.execute(
                 "INSERT INTO topology_edges(source_id, target_id, relation, properties_json) VALUES (?, ?, ?, ?)",
                 (
                     str(edge.get("source_id") or edge.get("source")),
                     str(edge.get("target_id") or edge.get("target")),
                     str(edge.get("relation") or edge.get("type") or "CONNECTED_TO"),
-                    json.dumps(edge.get("properties", {})),
+                    json.dumps(props),
                 ),
             )
         db.audit("topology_uploaded", {"filename": filename, "nodes": len(nodes), "edges": len(edges)})

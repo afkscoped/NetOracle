@@ -7,7 +7,7 @@
   <meta name="description" content="NetOracle: Predict, localise, diagnose and remediate 5G network faults using causal AI, graph intelligence and multi-LLM ensemble."/>
   <link rel="icon" href="/static/favicon.svg"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="/static/styles.css"/>
   <script src="https://cdn.jsdelivr.net/npm/d3@7" defer></script>
 </head>
@@ -60,6 +60,10 @@
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
       Data Sources
     </button>
+    <button class="nav-btn" data-tab="executive" id="nav-executive">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-7"/><path d="M14 7h5v5"/></svg>
+      Executive Proof
+    </button>
   </nav>
 
   <!-- Main content -->
@@ -73,7 +77,9 @@
         <div class="tab-actions">
           <button class="btn-secondary" id="btnTick">⚡ Tick</button>
           <button class="btn-primary" id="btnRefresh">↺ Refresh</button>
-          <a href="/twin" class="btn-secondary">🌐 3D Twin</a>
+          <button class="btn-primary" id="btnAutopilot">Preventive Autopilot</button>
+          <button class="btn-secondary" id="btnTwinEmbed">🌐 View Twin Here</button>
+          <a href="/twin" class="btn-secondary">Open Twin</a>
         </div>
       </div>
 
@@ -138,6 +144,16 @@
         </div>
         <div id="realtimePanel" class="realtime-panel">
           <div class="empty-state">Open5GS is the core real-time source. If WSL/Open5GS is offline, NetOracle keeps the trained Open5GS-shaped fallback stream alive.</div>
+        </div>
+      </div>
+
+      <div class="panel glass-panel">
+        <div class="panel-header">
+          <h2>Preventive Autopilot <span class="badge-muted">counterfactual safe actions</span></h2>
+          <button class="btn-secondary mini" id="btnAutopilotRefresh">Refresh Autopilot</button>
+        </div>
+        <div id="autopilotPanel" class="autopilot-panel">
+          <div class="empty-state">Autopilot compares candidate fixes once telemetry is available.</div>
         </div>
       </div>
 
@@ -335,6 +351,7 @@
         <div class="panel glass-panel">
           <div class="panel-header"><h2>RL Policy (CMDP)</h2></div>
           <button class="btn-secondary" id="btnPolicy">Show Policy State</button>
+          <button class="btn-primary" id="btnAdaptiveWireless">Build Adaptive Plan</button>
           <div class="terminal narrative-output" id="policyOutput">Policy interpretation will appear here.</div>
         </div>
       </div>
@@ -410,14 +427,20 @@
             <input id="syntheticNodes" type="number" min="5" max="20" step="1" value="8" class="num-input"/>
           </label>
         </div>
-        <div class="slice-checks">
-          <label><input class="slice-check" type="checkbox" value="slice_1" checked/> eMBB</label>
-          <label><input class="slice-check" type="checkbox" value="slice_2" checked/> mMTC</label>
-          <label><input class="slice-check" type="checkbox" value="slice_3" checked/> URLLC</label>
+        <div class="smooth-selector">
+          <label class="field-label">Slice Profile
+            <select id="syntheticSlices" class="select-input">
+              <option value="all">All Slices</option>
+              <option value="slice_1">eMBB only</option>
+              <option value="slice_2">mMTC only</option>
+              <option value="slice_3">URLLC only</option>
+            </select>
+          </label>
         </div>
         <div class="tab-actions" style="margin-top:14px">
           <button class="btn-primary" id="btnGenerateSynthetic">Generate &amp; Load</button>
-          <button class="btn-secondary" id="btnTrainGenerated" onclick="fetch('/api/training/export-retrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:5000,cpu:true})}).then(r=>r.json()).then(j=>document.getElementById('syntheticOutput').innerHTML='<pre class=&quot;terminal&quot;>'+JSON.stringify(j.data||j,null,2)+'</pre>')">Train Model on This Data</button>
+          <button class="btn-secondary" id="btnDownloadSynthetic">Download Generated CSV</button>
+          <button class="btn-secondary" id="btnTrainGenerated">Train Model on This Data</button>
         </div>
         <div class="terminal narrative-output" id="syntheticOutput">Choose a scenario, then generate telemetry with correlated 5G metrics and fault cascades.</div>
         <div id="datasetStats" class="dataset-stats"></div>
@@ -442,6 +465,36 @@
 2026-05-10T10:00:00Z,slice_1,upf_1,UPF,52,58,24,0.006,860,0.55,0,
 2026-05-10T10:00:05Z,slice_1,upf_1,UPF,88,72,145,0.12,320,0.91,1,congestion</pre>
       </div>
+      <div class="panel glass-panel">
+        <div class="panel-header">
+          <h2>Adaptive Data Twin Readiness</h2>
+          <div class="tab-actions">
+            <button class="btn-primary" id="btnTemplates">Show Exact Templates</button>
+            <button class="btn-secondary" id="btnDataQuality">Check Data Quality</button>
+          </div>
+        </div>
+        <div id="dataTwinPanel" class="terminal narrative-output">Use this panel to verify exact telemetry/topology formats and whether the current dataset is fit for retraining.</div>
+      </div>
+    </section>
+
+    <!-- ── EXECUTIVE PROOF TAB ── -->
+    <section class="tab" id="tab-executive">
+      <div class="tab-header">
+        <h1>Executive Proof Mode</h1>
+        <div class="tab-actions">
+          <button class="btn-primary" id="btnExecutiveProof">Refresh Proof</button>
+          <button class="btn-secondary" id="btnGroqHealth">Verify Groq</button>
+        </div>
+      </div>
+      <div class="panel glass-panel hero-proof">
+        <div id="executiveProofPanel" class="proof-panel">
+          <div class="empty-state">Click Refresh Proof to build the boss-facing evidence story.</div>
+        </div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header"><h2>Groq / XAI Health</h2></div>
+        <div id="groqHealthPanel" class="terminal narrative-output">Groq key presence and reachability will be verified safely without displaying the key.</div>
+      </div>
     </section>
 
   </main>
@@ -462,6 +515,17 @@
     </ul>
     <p class="modal-note">Default source is <strong>Open5GS real-time core</strong>; fallback streams remain available for offline demos.</p>
     <button class="btn-primary" id="btnOnboardOk">Got it — Launch Dashboard</button>
+  </div>
+</div>
+
+<!-- Embedded 3D Twin Modal -->
+<div id="twinModal" class="modal-overlay twin-modal" style="display:none">
+  <div class="modal-box twin-modal-box glass-panel">
+    <div class="panel-header">
+      <h2>NetOracle Holographic Digital Twin</h2>
+      <button class="xai-close" id="btnCloseTwin">×</button>
+    </div>
+    <iframe id="twinFrame" title="NetOracle 3D Digital Twin"></iframe>
   </div>
 </div>
 

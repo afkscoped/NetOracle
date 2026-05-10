@@ -14,6 +14,7 @@ const state = {
   pathPick: [],
   highlightedPath: [],
   dagHistory: [],
+  lastSynthetic: null,
 };
 
 async function api(path, options = {}) {
@@ -108,9 +109,14 @@ function renderExplanationCard(explain) {
   const evidence = (explain.evidence || []).map(e => `<div class="evidence-row"><span>${e.rank}</span><div><b>${human(e.feature)}</b><p>${e.interpretation}</p></div></div>`).join('');
   const trust = explain.trust || {};
   const components = trust.components || {};
+  const details = (explain.technical_details || []).map(item => `<li>${item}</li>`).join('');
+  const buttons = Object.entries(explain.button_guide || {}).map(([label, meaning]) => `<div class="guide-row"><b>${label}</b><span>${meaning}</span></div>`).join('');
+  const glossary = Object.entries(explain.device_glossary || {}).map(([term, meaning]) => `<details><summary>${term}</summary><p>${meaning}</p></details>`).join('');
+  const questions = (explain.operator_questions || []).map(q => `<span>${q}</span>`).join('');
   return `
     <div class="explain-card">
       <div class="explain-headline">${explain.headline || 'NetOracle explanation'}</div>
+      <p class="layman-summary">${explain.layman_summary || ''}</p>
       <p>${explain.narrative || ''}</p>
       <div class="metric-strip">
         ${metricPill('Trust', pct(trust.score), trust.score > 0.7 ? 'good' : 'warn')}
@@ -118,7 +124,11 @@ function renderExplanationCard(explain) {
         ${metricPill('Causal', pct(components.causal_agreement), '')}
       </div>
       <div class="evidence-stack">${evidence || '<div class="muted-note">No ranked drivers yet.</div>'}</div>
+      ${details ? `<div class="deep-dive"><b>What this tab is doing</b><ul>${details}</ul></div>` : ''}
+      ${buttons ? `<div class="button-guide"><b>Button guide</b>${buttons}</div>` : ''}
       <div class="math-panel"><b>${explain.theory?.title || 'Theory'}</b><code>${explain.theory?.equation || ''}</code><p>${explain.theory?.meaning || ''}</p></div>
+      ${glossary ? `<div class="glossary-grid"><b>Device glossary</b>${glossary}</div>` : ''}
+      ${questions ? `<div class="question-chips">${questions}</div>` : ''}
       <div class="next-step">${explain.recommended_next_step || ''}</div>
     </div>`;
 }
@@ -144,10 +154,12 @@ function renderForecastCard(proactive) {
 function renderNlAnswer(data) {
   const rows = data?.result || [];
   const names = rows.map(r => r.label || r.node_id || r.id || JSON.stringify(r)).slice(0, 6);
+  const answer = data?.answer ? `<p class="answer-primary">${data.answer}</p>` : '';
   return `
     <div class="answer-card">
       <h3>${names.length ? names.join(', ') : 'No direct graph match found'}</h3>
-      <p>NetOracle translated your question using <b>${human(data?.method)}</b> and matched ${rows.length} graph result${rows.length === 1 ? '' : 's'}.</p>
+      ${answer}
+      <p>NetOracle translated your question using <b>${human(data?.method)}</b> and matched ${rows.length} graph/audit result${rows.length === 1 ? '' : 's'}.</p>
       <div class="cypher-chip">${data?.cypher || 'No Cypher generated'}</div>
       <div class="metric-strip">${metricPill('Confidence', pct(data?.confidence), data?.confidence > 0.75 ? 'good' : 'warn')}${metricPill('Results', rows.length, '')}</div>
     </div>`;
@@ -235,6 +247,60 @@ function renderDatasetStats(summary, rows = []) {
         ${metricPill('KL divergence', summary?.kl_divergence ?? summary?.profile_kl_divergence ?? '0.04', 'good')}
       </div>
     </div>`);
+}
+
+function renderAutopilot(data) {
+  if (!data || data.status === 'insufficient_data') return `<div class="empty-state">${data?.message || 'Autopilot is waiting for telemetry.'}</div>`;
+  const actions = (data.actions || []).map(action => `
+    <div class="action-compare ${action.approved ? 'approved' : 'blocked'}">
+      <div><b>${human(action.action)}</b><small>${action.rationale}</small></div>
+      <div class="risk-bars">
+        <span style="--w:${Math.round((action.risk_before || 0) * 100)}%"></span>
+        <span class="after" style="--w:${Math.round((action.risk_after || 0) * 100)}%"></span>
+      </div>
+      <div class="metric-strip">${metricPill('Before', pct(action.risk_before), 'warn')}${metricPill('After', pct(action.risk_after), action.approved ? 'good' : 'bad')}${metricPill('Safety', human(action.safety), action.approved ? 'good' : 'warn')}</div>
+    </div>`).join('');
+  return `
+    <div class="proof-headline">${data.executive_summary || 'Preventive action comparison ready.'}</div>
+    <div class="trilogy-grid">${actions}</div>
+    <div class="deep-dive"><b>Why this is unique</b><ul>${safeList(data.why_unique || [])}</ul></div>`;
+}
+
+function renderExecutiveProof(data) {
+  if (!data) return '<div class="empty-state">No proof data available.</div>';
+  const trilogy = (data.full_trilogy || []).map(item => `
+    <div class="trilogy-card">
+      <b>${item.name}</b>
+      <p>${item.proof}</p>
+      <span class="status-pill">${human(item.status)}</span>
+    </div>`).join('');
+  const comparison = (data.comparison || []).map(row => `
+    <div class="compare-row">
+      <b>${row.capability}</b>
+      <span>${row.legacy}</span>
+      <strong>${row.netoracle}</strong>
+    </div>`).join('');
+  const talk = (data.talk_track || []).map(item => `<li>${item}</li>`).join('');
+  const model = data.evidence?.model || {};
+  const quality = data.evidence?.data_quality || {};
+  return `
+    <div class="proof-headline">${data.headline}</div>
+    <div class="metric-strip">
+      ${metricPill('AUC proxy', model.auc_proxy ?? model.model_auc ?? '--', 'good')}
+      ${metricPill('Lead time', `${model.lead_time_minutes || 0} min`, 'good')}
+      ${metricPill('Data quality', quality.quality_score ?? '--', quality.quality_score >= 0.8 ? 'good' : 'warn')}
+      ${metricPill('Audit types', (data.evidence?.audit_event_types || []).length, '')}
+    </div>
+    <div class="trilogy-grid">${trilogy}</div>
+    <div class="comparison-table">${comparison}</div>
+    <div class="deep-dive"><b>Boss talk track</b><ul>${talk}</ul></div>`;
+}
+
+function renderTemplates(data) {
+  return `
+    <div class="summary-card"><h3>Telemetry CSV Header</h3><code>${data.telemetry_csv_header}</code></div>
+    <div class="summary-card"><h3>Telemetry Example</h3><pre>${JSON.stringify(data.telemetry_example, null, 2)}</pre></div>
+    <div class="summary-card"><h3>Topology JSON Example</h3><pre>${JSON.stringify(data.topology_example, null, 2)}</pre></div>`;
 }
 
 function setStatus(mode, label) {
@@ -523,8 +589,22 @@ async function refreshProactive() {
   return state.proactive;
 }
 
+async function refreshAutopilot() {
+  html('autopilotPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const res = await api('/api/proactive/autopilot');
+  html('autopilotPanel', renderAutopilot(res.data));
+  return res.data;
+}
+
+async function refreshExecutiveProof() {
+  html('executiveProofPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const res = await api('/api/executive/proof');
+  html('executiveProofPanel', renderExecutiveProof(res.data));
+  return res.data;
+}
+
 async function refreshAll() {
-  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshProactive(), refreshMetrics(), explainCurrentTab(false)]);
+  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshProactive(), refreshAutopilot(), refreshMetrics(), explainCurrentTab(false)]);
 }
 
 function handleTick(payload) {
@@ -584,6 +664,7 @@ function setupTabs() {
       if (tab === 'datasources') refreshDataMode().catch(toast);
       if (tab === 'topology') refreshTopology().catch(toast);
       if (tab === 'intelligence') refreshDAG().catch(toast);
+      if (tab === 'executive') refreshExecutiveProof().catch(toast);
       explainCurrentTab(false).catch(toast);
     });
   });
@@ -601,6 +682,7 @@ function setupButtons() {
   $('btnBenchmark')?.addEventListener('click', runBenchmark);
   $('btnHopfield')?.addEventListener('click', runHopfield);
   $('btnPolicy')?.addEventListener('click', showPolicy);
+  $('btnAdaptiveWireless')?.addEventListener('click', buildAdaptiveWirelessPlan);
   $('btnStressTest')?.addEventListener('click', runStressTest);
   $('btnExportAudit')?.addEventListener('click', () => exportReport('/api/cloud/export-audit'));
   $('btnExportBench')?.addEventListener('click', () => exportReport('/api/cloud/export-benchmark'));
@@ -612,10 +694,20 @@ function setupButtons() {
   $('btnUploadTopo')?.addEventListener('click', uploadTopology);
   $('btnAnalyse')?.addEventListener('click', analyseUploaded);
   $('btnGenerateSynthetic')?.addEventListener('click', generateSyntheticData);
+  $('btnDownloadSynthetic')?.addEventListener('click', downloadSyntheticData);
+  $('btnTrainGenerated')?.addEventListener('click', trainGeneratedData);
   $('btnRealtimeAnalyse')?.addEventListener('click', analyseRealtime);
   $('btnSimulateFix')?.addEventListener('click', simulateFix);
   $('btnOpen5gsDemo')?.addEventListener('click', runOpen5gsDemo);
   $('btnExplainTab')?.addEventListener('click', () => explainCurrentTab(true).catch(toast));
+  $('btnAutopilot')?.addEventListener('click', () => refreshAutopilot().catch(toast));
+  $('btnAutopilotRefresh')?.addEventListener('click', () => refreshAutopilot().catch(toast));
+  $('btnExecutiveProof')?.addEventListener('click', () => refreshExecutiveProof().catch(toast));
+  $('btnGroqHealth')?.addEventListener('click', () => verifyGroq().catch(toast));
+  $('btnTemplates')?.addEventListener('click', () => showTemplates().catch(toast));
+  $('btnDataQuality')?.addEventListener('click', () => checkDataQuality().catch(toast));
+  $('btnTwinEmbed')?.addEventListener('click', openTwinModal);
+  $('btnCloseTwin')?.addEventListener('click', closeTwinModal);
   $('btnOnboardOk')?.addEventListener('click', () => { localStorage.setItem('netor_v2_welcomed', '1'); $('onboardModal').style.display = 'none'; });
 }
 
@@ -699,6 +791,31 @@ async function runHopfield() {
   html('hopfieldViz', assignments.map(a => `<span class="hop-cell active" style="opacity:${Math.max(0.25, a.probability || 0.5)}" title="channel ${a.channel} -> user ${a.user}, p=${a.probability}"></span>`).join(''));
 }
 
+function renderAdaptiveWirelessPlan(data) {
+  const allocation = data?.allocation || {};
+  const rl = data?.rl_recommendation || {};
+  return `
+    ${renderObjectSummary(data?.network_basis || {}, 'Live Network Basis')}
+    <div class="summary-card">
+      <h3>Adaptive Wireless Decision</h3>
+      <div class="metric-strip">
+        ${metricPill('Fairness', allocation.fairness_index ?? '--', allocation.fairness_index >= 0.7 ? 'good' : 'warn')}
+        ${metricPill('Throughput', `${allocation.throughput_mbps ?? '--'} Mbps`, 'good')}
+        ${metricPill('CMDP Action', human(rl.action || rl.recommended_action || 'monitor'), '')}
+        ${metricPill('Safety', human(rl.safety || rl.status || 'evaluated'), '')}
+      </div>
+    </div>
+    <div class="deep-dive"><b>Why this tab matters now</b><ul>${safeList(data?.why_it_matters || [])}</ul></div>`;
+}
+
+async function buildAdaptiveWirelessPlan() {
+  html('policyOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const result = await api('/api/wireless/adaptive-plan');
+  html('policyOutput', renderAdaptiveWirelessPlan(result.data));
+  const assignments = result.data?.allocation?.assignments || [];
+  html('hopfieldViz', assignments.map(a => `<span class="hop-cell active" style="opacity:${Math.max(0.25, a.probability || 0.5)}" title="channel ${a.channel} -> user ${a.user}, p=${a.probability}"></span>`).join(''));
+}
+
 async function showPolicy() {
   const result = await api('/api/rl/policy');
   const constraints = result.data?.cmdp?.constraint_health || {};
@@ -731,6 +848,7 @@ async function uploadTelemetry() {
   form.append('file', file);
   const result = await api('/api/data/upload-telemetry', { method: 'POST', body: form });
   html('uploadOutput', renderObjectSummary(result.data, 'Telemetry Ingestion'));
+  await Promise.allSettled([refreshTopology(), refreshMetrics(), refreshProactive(), explainCurrentTab(false)]);
 }
 
 async function uploadTopology() {
@@ -747,6 +865,7 @@ async function analyseUploaded() {
   const result = await api('/api/analyse/uploaded-data', { method: 'POST' });
   html('uploadOutput', renderObjectSummary(result.data, 'Uploaded Data Analysis'));
   if (result.data?.alert) renderAlert(result.data.alert);
+  await Promise.allSettled([refreshTopology(), refreshAudit(), refreshMetrics(), refreshProactive(), explainCurrentTab(false)]);
 }
 
 function renderDataPreview(rows) {
@@ -757,7 +876,8 @@ function renderDataPreview(rows) {
 
 async function generateSyntheticData() {
   html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
-  const slices = [...document.querySelectorAll('.slice-check:checked')].map(el => el.value);
+  const selected = $('syntheticSlices')?.value || 'all';
+  const slices = selected === 'all' ? ['slice_1', 'slice_2', 'slice_3'] : [selected];
   const body = {
     scenario: $('syntheticScenario')?.value || 'mixed',
     duration_hours: Number($('syntheticDuration')?.value || 6),
@@ -767,9 +887,28 @@ async function generateSyntheticData() {
   };
   const result = await api('/api/data/generate-synthetic', { method: 'POST', body: JSON.stringify(body) });
   const data = result.data || {};
-  html('syntheticOutput', renderObjectSummary(data, 'Generated Dataset') + renderDataPreview(data.preview || []));
+  state.lastSynthetic = data;
+  html('syntheticOutput', renderObjectSummary(data, 'Generated Dataset') + `<div class="action-card"><b>Download ready</b><span>${data.output || 'generated CSV'}</span><small>Use Download Generated CSV, then upload/train it to prove adaptation end-to-end.</small></div>` + renderDataPreview(data.preview || []));
   renderDatasetStats(data, data.preview || []);
   await refreshAll();
+}
+
+function downloadSyntheticData() {
+  const url = state.lastSynthetic?.download_url;
+  if (!url) {
+    html('syntheticOutput', '<div class="empty-state">Generate a synthetic dataset first.</div>');
+    return;
+  }
+  window.location.href = url;
+}
+
+async function trainGeneratedData() {
+  html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const payload = { limit: 5000, cpu: true };
+  if (state.lastSynthetic?.output) payload.data = state.lastSynthetic.output;
+  const result = await api('/api/training/export-retrain', { method: 'POST', body: JSON.stringify(payload) });
+  html('syntheticOutput', renderObjectSummary(result.data?.export, 'Training Export') + renderObjectSummary(result.data?.training, 'Training Job'));
+  await Promise.allSettled([refreshMetrics(), refreshAudit(), explainCurrentTab(false)]);
 }
 
 async function analyseRealtime() {
@@ -807,6 +946,35 @@ window.switchMode = async function switchMode(mode) {
   html('dataModeInfo', renderObjectSummary(result, 'Data Source Switched'));
   await refreshDataMode();
 };
+
+async function showTemplates() {
+  const result = await api('/api/data/templates');
+  html('dataTwinPanel', renderTemplates(result.data));
+}
+
+async function checkDataQuality() {
+  html('dataTwinPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const result = await api('/api/data/quality?limit=1000');
+  html('dataTwinPanel', renderObjectSummary(result.data, 'Adaptive Data Twin Quality') + `<div class="deep-dive"><b>Warnings</b><ul>${safeList(result.data?.warnings || [], 'No quality warnings.')}</ul></div>`);
+}
+
+async function verifyGroq() {
+  html('groqHealthPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const result = await api('/api/groq/health');
+  html('groqHealthPanel', renderObjectSummary(result.data, 'Groq Health'));
+}
+
+function openTwinModal() {
+  const modal = $('twinModal');
+  const frame = $('twinFrame');
+  if (frame && !frame.src) frame.src = '/twin';
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeTwinModal() {
+  const modal = $('twinModal');
+  if (modal) modal.style.display = 'none';
+}
 
 window.explainNode = async function explainNode(nodeId) {
   const res = await api(`/api/explain/node/${encodeURIComponent(nodeId)}`);

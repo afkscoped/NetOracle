@@ -5,6 +5,161 @@ from app.database import db
 from app.services.graph import graph_service
 from app.services.proactive_engine import proactive_engine
 
+DEVICE_GLOSSARY = {
+    "AMF": "Access and Mobility Management Function. It is like the front desk of the 5G core: it registers devices, manages mobility, and keeps track of where users are connected.",
+    "SMF": "Session Management Function. It creates and manages data sessions, deciding how user traffic should travel through the 5G core.",
+    "UPF": "User Plane Function. It is the data gateway that carries real user traffic between phones, applications, and the internet.",
+    "PCF": "Policy Control Function. It stores policy rules such as QoS, charging, throttling, and slice behavior.",
+    "NRF": "Network Repository Function. It is the service directory where 5G core functions discover each other.",
+    "gNB": "5G base station. It connects phones and IoT devices over radio and forwards their traffic into the core network.",
+    "VNF": "Virtual Network Function. A telecom function running as software, so it can be scaled, restarted, or moved.",
+    "Slice": "A logical network reserved for a use case, such as high-throughput broadband, IoT, or ultra-low-latency services.",
+    "PRB": "Physical Resource Block. A small unit of radio capacity; high PRB utilization means the radio layer is getting crowded.",
+    "SLA": "Service Level Agreement. The promised performance limit, such as maximum latency or packet loss.",
+    "DAG": "Directed Acyclic Graph. A graph with arrows and no loops, used here to show likely cause-effect relationships.",
+    "CTGNN": "Causal Temporal Graph Neural Network. A model that learns how network metrics evolve over time and across causal graph edges.",
+    "CMDP": "Constrained Markov Decision Process. A reinforcement-learning policy that is allowed to optimize only when safety limits are respected.",
+    "RAG": "Retrieval-Augmented Generation. The LLM is grounded with past incidents and graph context instead of guessing from memory alone.",
+    "SHAP": "A feature-attribution method that estimates how much each metric pushed a prediction up or down.",
+}
+
+METRIC_GLOSSARY = {
+    "cpu": "Compute load on a network function. Sustained high CPU creates queues and delays.",
+    "memory": "Memory pressure on a service. Rising memory can indicate leaks or overloaded VNFs.",
+    "latency_ms": "Delay in milliseconds. Higher latency means users wait longer for network responses.",
+    "packet_loss": "Fraction of packets that disappear or are dropped. Loss causes retransmissions, slow apps, and voice/video glitches.",
+    "throughput_mbps": "Useful traffic rate in megabits per second. Drops can reveal congestion, shaping, or link trouble.",
+    "prb_utilization": "Radio resource usage. High values mean the radio layer has little spare capacity.",
+}
+
+TAB_MANIFESTS = {
+    "dashboard": {
+        "purpose": "This is the live NOC cockpit. It shows whether the system is healthy now and which component is most likely to fail soon.",
+        "features": [
+            "Fault Probability estimates future risk instead of waiting for hard threshold alarms.",
+            "Proactive Forecast shows T+5, T+10, and T+20 minute risk so operators can act before SLA damage.",
+            "Realtime Core panel analyses the active telemetry source and simulates best fixes.",
+            "3D Twin opens a holographic network view that maps risks to infrastructure nodes.",
+        ],
+        "buttons": {
+            "Tick": "Generates one telemetry tick and immediately refreshes charts and alerts.",
+            "Refresh": "Reloads telemetry, topology, causal graph, audit trail, forecasts, metrics, and explanations.",
+            "3D Twin": "Shows the network as an interactive digital twin.",
+            "Explain Tab": "Opens the XAI panel for the current tab.",
+        },
+        "operator_questions": ["What is likely to fail next?", "How much time do we have?", "Which metric is driving the risk?", "What action is safe?"],
+    },
+    "intelligence": {
+        "purpose": "This tab proves that NetOracle is not only plotting metrics; it is learning likely cause-effect structure.",
+        "features": [
+            "NOTEARS discovers an acyclic causal graph from recent telemetry.",
+            "Federated voting merges slice-level causal edges into a global view.",
+            "Benchmarks compare NetOracle against simpler baselines using AUC, false-positive rate, and lead time.",
+            "DAG history helps reviewers see whether causal structure is stable or drifting.",
+        ],
+        "buttons": {
+            "Refresh DAG": "Recomputes and redraws causal edges using the latest telemetry.",
+            "Run Benchmark": "Runs live benchmark scenarios and renders model-vs-baseline bars.",
+        },
+        "operator_questions": ["Which metric tends to move first?", "Is the model better than thresholds?", "Are causal edges stable across slices?"],
+    },
+    "topology": {
+        "purpose": "This tab connects predictions to real infrastructure so the team can localise blast radius.",
+        "features": [
+            "The property graph stores nodes, services, slices, and relations in a Neo4j-compatible shape.",
+            "Node inspector explains selected infrastructure and shows recent metric sparkline history.",
+            "NL-to-Cypher lets operators ask graph questions without writing query syntax.",
+            "Path highlighting reveals which dependencies might carry a fault cascade.",
+        ],
+        "buttons": {
+            "Refresh": "Reloads topology nodes, edges, risk colors, and the node inspector data.",
+            "Ask": "Converts a natural-language topology question into graph lookup logic.",
+            "Explain node": "Explains one selected network element, its role, and its risk context.",
+        },
+        "operator_questions": ["Where is the fault located?", "What depends on this node?", "Which neighbors are affected?", "What does this device type do?"],
+    },
+    "diagnosis": {
+        "purpose": "This tab demonstrates the closed loop: inject/observe fault, localise it, diagnose root cause, and choose a safe response.",
+        "features": [
+            "Fault injection creates controlled test events for demos and validation.",
+            "GraphRAG grounds the LLM using topology plus past incident memory.",
+            "MoE specialists debate root cause from radio, core, transport, and security viewpoints.",
+            "Risk-gated remediation blocks unsafe automation and escalates when confidence is insufficient.",
+        ],
+        "buttons": {
+            "Run Closed-Loop Demo": "Runs telemetry, prediction, graph localisation, diagnosis, remediation, audit, and UI refresh together.",
+            "Inject Fault Only": "Adds fault telemetry without forcing the full diagnosis sequence.",
+            "Ask": "Asks an investigation question while analysing an incident.",
+        },
+        "operator_questions": ["What caused the fault?", "What evidence supports it?", "Which specialist agreed?", "Can we safely remediate?"],
+    },
+    "wireless": {
+        "purpose": "This tab shows optimization and safety control for radio/resource decisions.",
+        "features": [
+            "Hopfield allocation searches for low-energy channel assignments under interference constraints.",
+            "Jain fairness shows whether resources are distributed evenly.",
+            "CMDP policy chooses remediation only when safety budgets allow it.",
+            "Stress tests compare light and heavy allocation pressure.",
+        ],
+        "buttons": {
+            "Run Allocator": "Runs Hopfield sub-channel assignment and visualizes selected channels.",
+            "Show Policy State": "Displays CMDP constraints and policy health.",
+            "Run Allocation Stress Test": "Compares allocation quality under different loads.",
+            "Export Audit Report": "Saves audit evidence locally.",
+            "Export Benchmark Report": "Saves benchmark evidence locally.",
+        },
+        "operator_questions": ["Are resources allocated fairly?", "Did the optimizer converge?", "Which actions are blocked by safety constraints?"],
+    },
+    "audit": {
+        "purpose": "This tab is the evidence ledger. It makes every prediction, diagnosis, export, and safety decision reviewable.",
+        "features": [
+            "Each event stores timestamp, event type, and structured payload.",
+            "Audit completeness proves that the closed loop is traceable.",
+            "Event explanations translate raw JSON into supervisor-friendly narratives.",
+        ],
+        "buttons": {
+            "All Events": "Filters the event ledger by type.",
+            "Explain": "Explains the selected audit event and the fields that matter.",
+        },
+        "operator_questions": ["Can we prove what the model did?", "Was an unsafe action blocked?", "Which evidence led to the final decision?"],
+    },
+    "datasources": {
+        "purpose": "This tab makes NetOracle adaptive. It can run on built-in priors, generated realistic data, uploaded telemetry, uploaded topology, or Open5GS-shaped streams.",
+        "features": [
+            "Realistic generation uses public-dataset-inspired ranges, diurnal load, correlated metrics, and fault cascades.",
+            "Uploads must match the canonical telemetry/topology schemas.",
+            "Export-retrain converts live telemetry into a training file and starts the local training pipeline.",
+            "Quality checks measure completeness, freshness, schema validity, and drift from the expected profile.",
+        ],
+        "buttons": {
+            "Open5GS Real-Time Core": "Switches source mode to Open5GS adapter/fallback.",
+            "Fallback Simulation": "Switches source mode to simulation.",
+            "CSV Stream": "Switches source mode to CSV streaming.",
+            "Prometheus": "Switches source mode to Prometheus adapter.",
+            "Analyse Open5GS Now": "Runs one Open5GS-shaped analysis cycle.",
+            "Generate & Load": "Creates realistic telemetry and ingests it into the active database.",
+            "Train Model on This Data": "Exports telemetry and starts retraining.",
+            "Upload Telemetry": "Loads user telemetry rows into the canonical store.",
+            "Upload Topology": "Loads user topology nodes and edges.",
+            "Analyse Uploaded Data": "Runs prediction, localisation, diagnosis, and remediation on uploaded data.",
+        },
+        "operator_questions": ["Is this data valid?", "Does it match training assumptions?", "Can the whole platform adapt to a new network?", "Can we retrain on the new data?"],
+    },
+    "executive": {
+        "purpose": "This tab answers the supervisor's first question: what makes NetOracle different from existing tools?",
+        "features": [
+            "It compares reactive threshold monitoring against predictive causal intelligence.",
+            "It shows benchmark-backed gains, explainability, safe automation, and auditability.",
+            "It summarizes the Full Trilogy: Preventive Autopilot, Adaptive Data Twin, and Executive Proof Mode.",
+        ],
+        "buttons": {
+            "Refresh Proof": "Rebuilds the evidence summary from live metrics, benchmarks, alerts, and audit data.",
+            "Run Benchmark": "Refreshes benchmark evidence used by proof mode.",
+        },
+        "operator_questions": ["Why is this better?", "Can it prevent faults before impact?", "Can it adapt to new data?", "Can it prove decisions?"],
+    },
+}
+
 THEORY_BY_TAB = {
     "dashboard": {
         "title": "Predictive risk scoring",
@@ -41,6 +196,11 @@ THEORY_BY_TAB = {
         "equation": "Quality = completeness × freshness × schema_validity × distribution_similarity",
         "meaning": "The system checks whether incoming data is fresh, complete, and compatible with the training schema.",
     },
+    "executive": {
+        "title": "Operational value proof",
+        "equation": "Value = lead_time × localisation × safe_action × auditability × adaptability",
+        "meaning": "The differentiator is not one model; it is the closed-loop chain from forecast to safe, explainable prevention.",
+    },
 }
 
 
@@ -63,9 +223,37 @@ class ExplainabilityService:
                 "rank": idx,
                 "feature": feature,
                 "interpretation": labels.get(feature, "This metric is contributing materially to predicted risk."),
+                "layman_definition": METRIC_GLOSSARY.get(feature, "A network measurement used by the prediction model."),
                 "trend_per_tick": slopes.get(feature),
             })
         return evidence
+
+    def _glossary_for_tab(self, tab: str, forecast: dict[str, Any] | None) -> dict[str, str]:
+        keys = {
+            "dashboard": ["SLA", "CTGNN", "SHAP", "UPF", "gNB"],
+            "intelligence": ["DAG", "CTGNN", "SLA", "PRB"],
+            "topology": ["AMF", "SMF", "UPF", "PCF", "NRF", "gNB", "Slice", "VNF"],
+            "diagnosis": ["RAG", "DAG", "CMDP", "AMF", "SMF", "UPF", "gNB"],
+            "wireless": ["PRB", "CMDP", "SLA", "gNB"],
+            "audit": ["SLA", "DAG", "CMDP", "RAG"],
+            "datasources": ["Slice", "VNF", "SLA", "PRB", "CTGNN"],
+            "executive": ["CTGNN", "DAG", "RAG", "CMDP", "SHAP", "SLA"],
+        }.get(tab, ["SLA", "CTGNN", "DAG"])
+        if forecast:
+            node = str(forecast.get("node_id", "")).lower()
+            if "upf" in node:
+                keys.append("UPF")
+            if "gnb" in node:
+                keys.append("gNB")
+            if "amf" in node:
+                keys.append("AMF")
+            if "smf" in node:
+                keys.append("SMF")
+        return {key: DEVICE_GLOSSARY[key] for key in dict.fromkeys(keys) if key in DEVICE_GLOSSARY}
+
+    def _component_explanations(self, tab: str) -> list[str]:
+        manifest = TAB_MANIFESTS.get(tab, TAB_MANIFESTS["dashboard"])
+        return manifest.get("features", [])
 
     def _trust_score(self, forecast: dict[str, Any] | None) -> dict[str, Any]:
         if not forecast:
@@ -110,11 +298,20 @@ class ExplainabilityService:
             narrative = "The audit trail records each forecast, diagnosis, remediation decision, and export as a causal confidence ledger."
         elif tab == "datasources":
             narrative = "Data source health is judged by schema validity, freshness, completeness, and drift from training distributions."
+        elif tab == "executive":
+            narrative = "Executive Proof Mode connects measurable model performance, proactive lead time, safe automation, data adaptivity, and audit evidence into one defensible story."
+        manifest = TAB_MANIFESTS.get(tab, TAB_MANIFESTS["dashboard"])
         result = {
             "tab": tab,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "headline": self._headline(tab, forecast),
             "narrative": narrative,
+            "layman_summary": manifest["purpose"],
+            "technical_details": self._component_explanations(tab),
+            "button_guide": manifest.get("buttons", {}),
+            "operator_questions": manifest.get("operator_questions", []),
+            "device_glossary": self._glossary_for_tab(tab, forecast),
+            "metric_glossary": METRIC_GLOSSARY,
             "evidence": self._feature_evidence(forecast),
             "theory": theory,
             "trust": self._trust_score(forecast),
@@ -132,6 +329,7 @@ class ExplainabilityService:
             "narrative": f"NetOracle recorded {event_type}. The important decision fields are action, confidence, risk, node, and safety status.",
             "key_fields": {key: data.get(key) for key in ["node_id", "slice_id", "fault_type", "action", "confidence", "risk", "status"] if key in data},
             "theory": THEORY_BY_TAB["audit"],
+            "device_glossary": self._glossary_for_tab("audit", None),
         }
 
     def explain_node(self, node_id: str) -> dict[str, Any]:
@@ -146,6 +344,9 @@ class ExplainabilityService:
             "evidence": self._feature_evidence(forecast),
             "theory": THEORY_BY_TAB["topology"],
             "trust": self._trust_score(forecast),
+            "device_glossary": self._glossary_for_tab("topology", forecast),
+            "metric_glossary": METRIC_GLOSSARY,
+            "layman_summary": f"{node_id} is being inspected as a network element. Its neighbourhood shows dependencies that may amplify or absorb faults.",
         }
 
     def latest_prediction_explanation(self) -> dict[str, Any]:

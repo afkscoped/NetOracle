@@ -170,5 +170,61 @@ class ProactiveEngine:
         db.audit("proactive_avoidance_decision", result)
         return result
 
+    def compare_actions(self) -> dict[str, Any]:
+        latest = self.latest()
+        top = latest.get("top_forecast")
+        if not top:
+            return {"status": "insufficient_data", "message": "No forecast is available yet.", "latest": latest}
+        candidates = [
+            ("scale_upf", 0.62, "Adds packet-processing capacity before queues become user-visible."),
+            ("reroute_slice", 0.48, "Moves traffic away from a risky dependency to reduce blast radius."),
+            ("traffic_shape", 0.35, "Temporarily slows non-critical flows to protect SLA-critical traffic."),
+            ("escalate_to_human", 0.10, "Keeps automation disabled and routes evidence to an operator."),
+        ]
+        rows = []
+        base = float(top.get("risk_t_plus_10", top.get("risk_now", 0.0)) or 0.0)
+        for action, effect, rationale in candidates:
+            cmdp = adaptive_rl_service.recommend(
+                top["fault_type"],
+                risk="low" if base < 0.70 else "medium",
+                probability=base,
+                conformal_risk_score=max(0.05, float(top.get("risk_t_plus_20", base)) - float(top.get("risk_now", 0.0))),
+                traffic_load=92.0 if "prb_utilization" in top.get("top_drivers", []) else 64.0,
+                node_id=top["node_id"],
+                candidate_action=action,
+            )
+            approved = bool(cmdp.get("cmdp_approved", not cmdp.get("escalate", False))) and action != "escalate_to_human"
+            risk_after = round(max(0.03, base * (1 - effect if approved else 0.98)), 3)
+            rows.append({
+                "action": action,
+                "approved": approved,
+                "risk_before": base,
+                "risk_after": risk_after,
+                "risk_reduction": round(base - risk_after, 3),
+                "safety": "approved" if approved else "blocked_or_manual",
+                "rationale": rationale,
+                "cmdp": cmdp,
+            })
+        rows.sort(key=lambda item: (item["approved"], item["risk_reduction"]), reverse=True)
+        best = rows[0]
+        payload = {
+            "status": "ready",
+            "forecast": top,
+            "actions": rows,
+            "best_action": best,
+            "executive_summary": (
+                f"NetOracle predicts {top['fault_type'].replace('_', ' ')} risk on {top['node_id']} "
+                f"and recommends {best['action'].replace('_', ' ')} because it can reduce T+10 risk "
+                f"from {round(base * 100)}% to {round(best['risk_after'] * 100)}% while passing safety checks."
+            ),
+            "why_unique": [
+                "It forecasts before SLA impact instead of waiting for a threshold alarm.",
+                "It compares counterfactual actions rather than suggesting a single blind fix.",
+                "It routes every action through CMDP safety gates and writes an audit trail.",
+            ],
+        }
+        db.audit("preventive_autopilot_comparison", payload)
+        return payload
+
 
 proactive_engine = ProactiveEngine()

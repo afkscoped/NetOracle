@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'https://unpkg.com/three@0.160.1/examples/jsm/po
 const sceneEl = document.getElementById('scene');
 const details = document.getElementById('details');
 const timeline = document.getElementById('timeline');
+const hud = document.querySelector('.hud');
 const threshold = document.getElementById('threshold');
 const scrubber = document.getElementById('scrubber');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -24,6 +25,8 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.25;
+controls.enablePan = true;
+controls.screenSpacePanning = true;
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.85, 0.42, 0.22);
@@ -51,6 +54,16 @@ const targetCamera = new THREE.Vector3(0, 46, 86);
 const targetControls = new THREE.Vector3(0, 0, 0);
 let replayEvents = [];
 let draggedNode = null;
+let pendingLiveUpdate = false;
+
+function viewport() {
+  const rect = sceneEl.getBoundingClientRect();
+  return { width: Math.max(320, rect.width || window.innerWidth), height: Math.max(240, rect.height || window.innerHeight) };
+}
+
+function isUiEvent(event) {
+  return Boolean(event.target.closest?.('.hud, .legend, button, a, input, pre'));
+}
 
 const floor = new THREE.GridHelper(160, 42, 0x00f5ff, 0x123451);
 floor.position.y = -18;
@@ -215,13 +228,18 @@ function animate() {
 }
 
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const size = viewport();
+  camera.aspect = size.width / size.height;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(size.width, size.height);
+  composer.setSize(size.width, size.height);
 });
 
+hud?.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
+hud?.addEventListener('pointerdown', event => event.stopPropagation());
+
 window.addEventListener('pointerdown', (event) => {
+  if (isUiEvent(event)) return;
   pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
@@ -240,6 +258,7 @@ window.addEventListener('pointerdown', (event) => {
 });
 
 window.addEventListener('pointermove', (event) => {
+  if (isUiEvent(event)) return;
   if (!draggedNode) return;
   pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -256,6 +275,7 @@ window.addEventListener('pointerup', () => {
 });
 
 window.addEventListener('contextmenu', async (event) => {
+  if (isUiEvent(event)) return;
   event.preventDefault();
   pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -299,7 +319,8 @@ function connectTwinWebSocket() {
   const ws = new WebSocket(`${proto}://${location.host}/ws/telemetry`);
   ws.onmessage = (event) => {
     const payload = JSON.parse(event.data);
-    if (payload.type !== 'tick' || !sceneData?.nodes) return;
+    if (payload.type !== 'tick' || !sceneData?.nodes || pendingLiveUpdate) return;
+    pendingLiveUpdate = true;
     const riskByNode = new Map();
     for (const frame of payload.frames || []) {
       riskByNode.set(frame.node_id, frame.fault_label ? 0.9 : 0);
@@ -307,7 +328,10 @@ function connectTwinWebSocket() {
     if (payload.alert?.node_id) riskByNode.set(payload.alert.node_id, payload.alert.fault_probability || 0.7);
     sceneData.nodes = sceneData.nodes.map(node => ({ ...node, fault_probability: Math.max(node.fault_probability || 0, riskByNode.get(node.id) || 0) }));
     sceneData.links = sceneData.links.map(link => ({ ...link, risk: Math.max(riskByNode.get(link.source) || 0, riskByNode.get(link.target) || 0, link.risk || 0) }));
-    drawScene(sceneData);
+    requestAnimationFrame(() => {
+      drawScene(sceneData);
+      pendingLiveUpdate = false;
+    });
   };
   ws.onclose = () => setTimeout(connectTwinWebSocket, 3000);
 }

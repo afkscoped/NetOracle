@@ -1,55 +1,55 @@
 {
   "status": "completed",
-  "best_auc": 0.9946,
+  "best_auc": 0.9898,
   "device": "cpu",
   "epochs": 8,
   "history": [
     {
       "epoch": 1,
-      "loss": 1.23662,
-      "val_auc": 0.9785,
+      "loss": 1.22023,
+      "val_auc": 0.9635,
       "device": "cpu"
     },
     {
       "epoch": 2,
-      "loss": 0.97041,
-      "val_auc": 0.9841,
+      "loss": 1.03087,
+      "val_auc": 0.9663,
       "device": "cpu"
     },
     {
       "epoch": 3,
-      "loss": 0.75439,
-      "val_auc": 0.9881,
+      "loss": 0.85317,
+      "val_auc": 0.9739,
       "device": "cpu"
     },
     {
       "epoch": 4,
-      "loss": 0.58861,
-      "val_auc": 0.9901,
+      "loss": 0.68401,
+      "val_auc": 0.9774,
       "device": "cpu"
     },
     {
       "epoch": 5,
-      "loss": 0.44067,
-      "val_auc": 0.9912,
+      "loss": 0.5369,
+      "val_auc": 0.982,
       "device": "cpu"
     },
     {
       "epoch": 6,
-      "loss": 0.34668,
-      "val_auc": 0.9917,
+      "loss": 0.41266,
+      "val_auc": 0.9849,
       "device": "cpu"
     },
     {
       "epoch": 7,
-      "loss": 0.2719,
-      "val_auc": 0.9932,
+      "loss": 0.31689,
+      "val_auc": 0.988,
       "device": "cpu"
     },
     {
       "epoch": 8,
-      "loss": 0.23364,
-      "val_auc": 0.9946,
+      "loss": 0.25646,
+      "val_auc": 0.9898,
       "device": "cpu"
     }
   ],

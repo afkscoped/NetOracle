@@ -84,6 +84,7 @@ NF_PROMETHEUS_PORTS = {
     "smf": 9096,
     "upf": 9097,
     "pcf": 9098,
+    "nrf": 9099,
 }
  
 # NetOracle node definitions for each Open5GS NF
@@ -442,18 +443,36 @@ class Open5GSAdapter:
         }
  
     def _fetch_nrf_metrics(self) -> dict:
-        """Fetch NRF-specific Prometheus metrics."""
-        # NRF doesn't have much traffic, mostly registration.
-        # We simulate a low background CPU.
+        """
+        NRF metrics - Network Repository Function.
+        NRF does not export rich Prometheus metrics by default.
+        We use NF registration count as a proxy for activity.
+        """
+        raw = self.prom.query_all({
+            "nf_registered": "nrf_nf_registered_count",
+            "nf_requests": "nrf_nnrf_nfm_request_total",
+        })
+
+        nf_count = raw.get("nf_registered") or 0.0
+        req_rate = self.cache.rate_per_second("nrf_req", raw.get("nf_requests") or 0.0)
+
+        # CPU proxy: request-rate driven.
+        cpu = min(85.0, 5.0 + req_rate * 0.5)
+
+        # Fault: NF count drops unexpectedly, indicating an NF deregistration storm.
+        fault_label = 1 if nf_count < 3 and self._tick_count > 5 else 0
+        fault_type = "nrf_nf_deregistration" if fault_label else ""
+
         return {
-            "cpu": round(random.uniform(5, 15), 2),
+            "cpu": round(cpu, 2),
             "memory": self._sim_memory(),
-            "latency_ms": round(random.uniform(5, 10), 2),
+            "latency_ms": round(3.0 + req_rate * 0.1, 2),
             "packet_loss": 0.0,
-            "throughput_mbps": 0.01,
-            "prb_utilization": 0.0,
-            "fault_label": 0,
-            "fault_type": "",
+            "throughput_mbps": round(req_rate * 0.01, 4),
+            "prb_utilization": round(min(1.0, nf_count / 20.0), 4),
+            "fault_label": fault_label,
+            "fault_type": fault_type,
+            "_raw_nf_count": nf_count,
         }
  
     def _fetch_gnb_metrics(self) -> dict:

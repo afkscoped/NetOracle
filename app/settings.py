@@ -5,6 +5,8 @@ from pathlib import Path
 
 def _load_env_file() -> dict[str, str]:
     env_path = Path(".env")
+    if not env_path.exists():
+        env_path = Path(__file__).resolve().parents[1] / ".env"
     values: dict[str, str] = {}
     if not env_path.exists():
         return values
@@ -13,7 +15,8 @@ def _load_env_file() -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        key = key.strip().removeprefix("export ").strip()
+        values[key] = value.strip().strip('"').strip("'")
     return values
 
 

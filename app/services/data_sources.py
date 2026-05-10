@@ -384,8 +384,8 @@ class UploadAdapter(BaseAdapter):
  
     def get_tick(self) -> list[dict]:
         try:
-            rows = self._db.latest_telemetry(8)
-            if not rows:
+            rows = self._db.latest_telemetry(50)
+            if not rows or len(rows) < 5:
                 return self._sim.get_tick()
             row = rows[self._index % len(rows)]
             self._index += 1

@@ -27,6 +27,10 @@ controls.autoRotate = true;
 controls.autoRotateSpeed = 0.25;
 controls.enablePan = true;
 controls.screenSpacePanning = true;
+controls.enableRotate = false;
+controls.enableZoom = false;
+controls.enablePan = false;
+renderer.domElement.style.touchAction = 'auto';
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.85, 0.42, 0.22);
@@ -55,6 +59,8 @@ const targetControls = new THREE.Vector3(0, 0, 0);
 let replayEvents = [];
 let draggedNode = null;
 let pendingLiveUpdate = false;
+let canvasHovered = false;
+let canvasInteracting = false;
 
 function viewport() {
   const rect = sceneEl.getBoundingClientRect();
@@ -63,6 +69,17 @@ function viewport() {
 
 function isUiEvent(event) {
   return Boolean(event.target.closest?.('.hud, .legend, button, a, input, pre'));
+}
+
+function isCanvasEvent(event) {
+  return event.target === renderer.domElement || sceneEl.contains(event.target);
+}
+
+function setCanvasControls(enabled) {
+  controls.enableRotate = enabled;
+  controls.enableZoom = enabled;
+  controls.enablePan = enabled;
+  renderer.domElement.style.touchAction = enabled ? 'none' : 'auto';
 }
 
 const floor = new THREE.GridHelper(160, 42, 0x00f5ff, 0x123451);
@@ -238,10 +255,29 @@ window.addEventListener('resize', () => {
 hud?.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
 hud?.addEventListener('pointerdown', event => event.stopPropagation());
 
+renderer.domElement.addEventListener('pointerenter', () => {
+  canvasHovered = true;
+});
+renderer.domElement.addEventListener('pointerleave', () => {
+  canvasHovered = false;
+  if (!canvasInteracting && !draggedNode) setCanvasControls(false);
+});
+renderer.domElement.addEventListener('wheel', (event) => {
+  if (!canvasHovered && !canvasInteracting) {
+    setCanvasControls(false);
+    return;
+  }
+  setCanvasControls(true);
+  event.stopPropagation();
+}, { capture: true, passive: false });
+
 window.addEventListener('pointerdown', (event) => {
-  if (isUiEvent(event)) return;
-  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  if (isUiEvent(event) || !isCanvasEvent(event)) return;
+  canvasInteracting = true;
+  setCanvasControls(true);
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObjects(nodeMeshes)[0];
   if (hit) {
@@ -258,10 +294,11 @@ window.addEventListener('pointerdown', (event) => {
 });
 
 window.addEventListener('pointermove', (event) => {
-  if (isUiEvent(event)) return;
+  if (isUiEvent(event) || !isCanvasEvent(event)) return;
   if (!draggedNode) return;
-  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -draggedNode.position.y);
   const next = new THREE.Vector3();
@@ -271,7 +308,8 @@ window.addEventListener('pointermove', (event) => {
 
 window.addEventListener('pointerup', () => {
   draggedNode = null;
-  controls.enabled = true;
+  canvasInteracting = false;
+  setCanvasControls(canvasHovered);
 });
 
 window.addEventListener('contextmenu', async (event) => {
@@ -319,8 +357,18 @@ function connectTwinWebSocket() {
   const ws = new WebSocket(`${proto}://${location.host}/ws/telemetry`);
   ws.onmessage = (event) => {
     const payload = JSON.parse(event.data);
+    if (payload.type === 'topology_morphed') {
+      load();
+      return;
+    }
     if (payload.type !== 'tick' || !sceneData?.nodes || pendingLiveUpdate) return;
     pendingLiveUpdate = true;
+    const knownNodes = new Set(sceneData.nodes.map(node => node.id));
+    const hasNewTopologyNode = (payload.frames || []).some(frame => frame.node_id && !knownNodes.has(frame.node_id));
+    if (hasNewTopologyNode) {
+      load().finally(() => { pendingLiveUpdate = false; });
+      return;
+    }
     const riskByNode = new Map();
     for (const frame of payload.frames || []) {
       riskByNode.set(frame.node_id, frame.fault_label ? 0.9 : 0);

@@ -283,14 +283,37 @@ function renderExecutiveProof(data) {
   const talk = (data.talk_track || []).map(item => `<li>${item}</li>`).join('');
   const model = data.evidence?.model || {};
   const quality = data.evidence?.data_quality || {};
+  const adaptive = data.adaptive_metrics || {};
+  const adaptiveRows = (data.hackathon_metrics || []).slice(0, 3).map(item => `
+    <div class="summary-card">
+      <h3>${item.metric}</h3>
+      <p>${item.value ?? item.why_unique}</p>
+      <small>${item.why_unique}</small>
+    </div>`).join('');
+  const comparisonBars = (data.comparison_chart || []).map(row => `
+    <div class="action-compare">
+      <div><b>${row.label}</b><small>NetOracle causal AI vs traditional correlational AI</small></div>
+      <div class="risk-bars">
+        <span style="--w:${Math.round((row.netoracle || 0) * 100)}%"></span>
+        <span class="after" style="--w:${Math.round((row.traditional || 0) * 100)}%"></span>
+      </div>
+      <div class="metric-strip">
+        ${metricPill('NetOracle', pct(row.netoracle), 'good')}
+        ${metricPill('Traditional', pct(row.traditional), 'warn')}
+      </div>
+    </div>`).join('');
   return `
     <div class="proof-headline">${data.headline}</div>
     <div class="metric-strip">
       ${metricPill('AUC proxy', model.auc_proxy ?? model.model_auc ?? '--', 'good')}
       ${metricPill('Lead time', `${model.lead_time_minutes || 0} min`, 'good')}
       ${metricPill('Data quality', quality.quality_score ?? '--', quality.quality_score >= 0.8 ? 'good' : 'warn')}
+      ${metricPill('Auto-map', adaptive.topology_auto_discovery_time_s ? `${adaptive.topology_auto_discovery_time_s}s` : '--', adaptive.topology_auto_discovery_time_s ? 'good' : 'warn')}
+      ${metricPill('CMDP blocks', adaptive.cmdp_prevented_catastrophes ?? 0, 'good')}
       ${metricPill('Audit types', (data.evidence?.audit_event_types || []).length, '')}
     </div>
+    <div class="trilogy-grid">${adaptiveRows}</div>
+    <div class="comparison-table">${comparisonBars}</div>
     <div class="trilogy-grid">${trilogy}</div>
     <div class="comparison-table">${comparison}</div>
     <div class="deep-dive"><b>Boss talk track</b><ul>${talk}</ul></div>`;
@@ -331,7 +354,7 @@ function updateKpis(alert, diagnosis, remediation, metrics = state.metrics) {
   setRing('ring-conf', conf * 100);
 
   if (remediation) {
-    text('kpiRemIcon', remediation.executed === false ? '🛡️' : '✅');
+    text('kpiRemIcon', remediation.executed === false ? 'SAFE' : 'AUTO');
     text('kpiRem', String(remediation.action || remediation.status || 'Decision').replaceAll('_', ' '));
     text('kpiRemSub', remediation.mode || remediation.risk || 'Risk-gated');
   }
@@ -640,6 +663,13 @@ function connectWebSocket() {
   ws.onmessage = (event) => {
     const payload = JSON.parse(event.data);
     if (payload.type === 'tick') handleTick(payload);
+    if (payload.type === 'topology_morphed') {
+      state.topology = payload.topology;
+      state.charts.topology?.update(payload.topology);
+      refreshExecutiveProof().catch(() => {});
+      refreshMetrics().catch(() => {});
+      toast(`Topology auto-morphed: ${payload.summary?.nodes_upserted ?? 0} nodes mapped`);
+    }
   };
   ws.onclose = () => {
     state.wsFailures += 1;
@@ -673,7 +703,10 @@ function setupTabs() {
 }
 
 function setupButtons() {
-  $('btnTick')?.addEventListener('click', async () => { const r = await api('/api/telemetry/tick', { method: 'POST' }); handleTick({ frames: r.data }); });
+  $('btnTick')?.addEventListener('click', async () => {
+    const r = await api('/api/telemetry/tick', { method: 'POST' });
+    handleTick(r.data || r);
+  });
   $('btnRefresh')?.addEventListener('click', () => refreshAll().catch(toast));
   $('btnRefreshDAG')?.addEventListener('click', () => refreshDAG().catch(toast));
   $('btnTopologyRefresh')?.addEventListener('click', () => refreshTopology().catch(toast));
@@ -908,7 +941,7 @@ async function trainGeneratedData() {
   if (state.lastSynthetic?.output) payload.data = state.lastSynthetic.output;
   const result = await api('/api/training/export-retrain', { method: 'POST', body: JSON.stringify(payload) });
   html('syntheticOutput', renderObjectSummary(result.data?.export, 'Training Export') + renderObjectSummary(result.data?.training, 'Training Job'));
-  await Promise.allSettled([refreshMetrics(), refreshAudit(), explainCurrentTab(false)]);
+  await Promise.allSettled([refreshTopology(), refreshMetrics(), refreshAudit(), refreshExecutiveProof(), explainCurrentTab(false)]);
 }
 
 async function analyseRealtime() {
@@ -960,8 +993,11 @@ async function checkDataQuality() {
 
 async function verifyGroq() {
   html('groqHealthPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
-  const result = await api('/api/groq/health');
-  html('groqHealthPanel', renderObjectSummary(result.data, 'Groq Health'));
+  const [groq, llm] = await Promise.all([
+    api('/api/groq/health').catch(error => ({ data: { error: error.message } })),
+    api('/api/llm/status').catch(error => ({ error: error.message })),
+  ]);
+  html('groqHealthPanel', renderObjectSummary(groq.data, 'Groq Health') + renderObjectSummary(llm.data || llm, 'Active LLM Backend'));
 }
 
 function openTwinModal() {

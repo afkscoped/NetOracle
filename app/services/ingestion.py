@@ -88,7 +88,11 @@ class IngestionService:
         frames = self.parse_telemetry_text(content, filename)
         for frame in frames:
             db.insert_telemetry(frame)
-        topology = graph_service.sync_from_telemetry(frames, origin="uploaded_data_twin")
+        topology = graph_service.sync_from_telemetry(
+            frames,
+            origin="uploaded_data_twin",
+            replace_existing=True,
+        )
         db.audit("telemetry_uploaded", {"filename": filename, "frames": len(frames), "topology": topology})
         return {"filename": filename, "frames_ingested": len(frames), "sample": frames[:3], "topology": topology}
 

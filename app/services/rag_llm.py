@@ -221,34 +221,74 @@ def route_to_specialists(
 
 # ── Multi-Specialist Debate Protocol ─────────────────────────────────────
 
-def call_llm(prompt: str) -> dict:
-    """Calls the Groq API model."""
+def call_llm(prompt: str, max_tokens: int = 500) -> dict:
+    """
+    LLM call with priority fallback chain:
+      1. Groq API (fast, cloud)  — if GROQ_API_KEY is set
+      2. Ollama (local)          — if Ollama is running
+      3. Heuristic fallback      — always works, no external deps
+
+    Never raises. Always returns {"text": str, "model": str, "source": str}.
+    """
+    from app.settings import get_settings
     settings = get_settings()
-    if not settings.groq_api_key:
-        logger.error("GROQ_API_KEY is not configured.")
-        return {}
-    full_prompt = prompt + "\n\nProvide the output in JSON format."
-    for model in groq_model_candidates():
+
+    # ── 1. Groq API ───────────────────────────────────────
+    if settings.groq_api_key:
         try:
-            response = requests.post(
+            import requests
+            headers = {
+                "Authorization": f"Bearer {settings.groq_api_key}",
+                "Content-Type":  "application/json",
+            }
+            body = {
+                "model":      "llama3-8b-8192",
+                "messages":   [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+            }
+            r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": full_prompt}],
-                    "temperature": 0.1,
-                    "response_format": {"type": "json_object"}
-                },
-                timeout=30,
+                headers=headers,
+                json=body,
+                timeout=20,
             )
-            response.raise_for_status()
-            text = response.json()["choices"][0]["message"]["content"]
-            result = json.loads(text)
-            result.setdefault("_model", model)
-            return result
+            r.raise_for_status()
+            text = r.json()["choices"][0]["message"]["content"].strip()
+            return {"text": text, "model": "llama3-8b-8192", "source": "groq"}
         except Exception as e:
-            logger.warning("Groq call failed for %s: %s", model, e)
-    return {}
+            import logging
+            logging.getLogger(__name__).warning(f"[LLM] Groq failed: {e}. Trying Ollama.")
+
+    # ── 2. Ollama (local) ─────────────────────────────────
+    try:
+        import requests
+        models = getattr(settings, "model_names", None) or \
+                 getattr(settings, "ollama_models", "phi3:mini").split(",")
+        model = models[0].strip() if models else "phi3:mini"
+        r = requests.post(
+            f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=30,
+        )
+        r.raise_for_status()
+        text = r.json().get("response", "").strip()
+        if text:
+            return {"text": text, "model": model, "source": "ollama"}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[LLM] Ollama failed: {e}. Using heuristic.")
+
+    # ── 3. Heuristic fallback ─────────────────────────────
+    return {
+        "text": (
+            '{"root_cause": "Heuristic: high resource utilisation detected", '
+            '"confidence": 0.45, "affected_components": [], '
+            '"action": "escalate_to_human", "domain": "unknown"}'
+        ),
+        "model": "heuristic",
+        "source": "fallback",
+    }
 
 
 def _call_specialist_llm(specialist: dict, prompt: str) -> dict:

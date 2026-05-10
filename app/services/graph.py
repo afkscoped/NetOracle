@@ -101,7 +101,12 @@ class GraphService:
     def topology(self) -> dict[str, Any]:
         return {"nodes": self.nodes(), "edges": self.edges()}
 
-    def sync_from_telemetry(self, frames: list[dict[str, Any]], origin: str = "adaptive_data_twin") -> dict[str, Any]:
+    def sync_from_telemetry(
+        self,
+        frames: list[dict[str, Any]],
+        origin: str = "adaptive_data_twin",
+        replace_existing: bool = False,
+    ) -> dict[str, Any]:
         """
         Infer a clean demo topology from telemetry identities so uploaded or generated
         datasets can reshape the whole product without requiring a separate topology file.
@@ -109,9 +114,12 @@ class GraphService:
         if not frames:
             return {"nodes_upserted": 0, "edges_upserted": 0, "message": "No telemetry frames supplied."}
 
-        # Remove the previous inferred topology while preserving hand-seeded or uploaded graph data.
-        db.execute("DELETE FROM topology_edges WHERE properties_json LIKE ?", (f'%"{origin}"%',))
-        db.execute("DELETE FROM topology_nodes WHERE properties_json LIKE ?", (f'%"{origin}"%',))
+        if replace_existing:
+            db.execute("DELETE FROM topology_edges")
+            db.execute("DELETE FROM topology_nodes")
+        else:
+            db.execute("DELETE FROM topology_edges WHERE properties_json LIKE ?", (f'%"{origin}"%',))
+            db.execute("DELETE FROM topology_nodes WHERE properties_json LIKE ?", (f'%"{origin}"%',))
 
         node_by_id: dict[str, dict[str, Any]] = {}
         slice_nodes: set[str] = set()
@@ -166,7 +174,12 @@ class GraphService:
                 "INSERT INTO topology_edges(source_id, target_id, relation, properties_json) VALUES (?, ?, ?, ?)",
                 (source, target, relation, encode({"origin": origin, "weight": 1.0})),
             )
-        summary = {"nodes_upserted": len(node_by_id), "edges_upserted": len(edge_keys), "origin": origin}
+        summary = {
+            "nodes_upserted": len(node_by_id),
+            "edges_upserted": len(edge_keys),
+            "origin": origin,
+            "replace_existing": replace_existing,
+        }
         db.audit("adaptive_topology_synced", summary)
         return summary
 
@@ -681,12 +694,22 @@ class GraphService:
                 answer = "No fault diagnosis has been recorded yet. Run a closed-loop demo or inject a fault first."
         return {"cypher": cypher, "parameters": {"slice_id": slice_id, "node_id": node_id}, "result": result, "answer": answer}
 
+    @staticmethod
+    def _llm_confidence(method: str) -> float:
+        return {
+            "groq": 0.88,
+            "ollama": 0.76,
+            "heuristic": 0.65,
+            "fallback": 0.65,
+            "regex_fallback": 0.65,
+        }.get(method, 0.65)
+
     def nl_to_cypher(self, question: str) -> dict[str, Any]:
         self.seed()
         few_shot = """You translate natural language questions about a 5G network topology into Cypher queries.
-Graph node types: Slice, gNB, UPF, Router, Service, Policy.
-Edges: USES, FORWARDS_TO, EXITS_VIA, SERVES, GOVERNED_BY, PEERS_WITH, SHARES_CONTROL_PLANE.
-Node IDs: slice_1..3, gnb_1..3, upf_1..3, router_1..3, app_1..3, policy_latency, policy_throughput.
+Graph node types: Slice, gNB, AMF, SMF, UPF, PCF, NRF, Router, Service, Policy.
+Edges: USES, FEEDS, FORWARDS_TO, EXITS_VIA, SERVES, GOVERNED_BY, PEERS_WITH, SHARES_CONTROL_PLANE.
+Node IDs may be static demo IDs like slice_1..3, gnb_1..3, upf_1..3, router_1..3, app_1..3, policy_latency, policy_throughput, or uploaded IDs discovered from telemetry.
 Properties: node_id, node_type, label, properties.fault_risk, properties.risk_score, properties.sla, properties.priority.
 
 Q: Which VNFs are connected to Slice 1?
@@ -708,35 +731,21 @@ Cypher: MATCH (s:Slice {id:'slice_1'})--(n) RETURN count(n)
 """
         cypher = None
         method = "regex_fallback"
-        settings = get_settings()
-        if settings.groq_api_key:
-            for model in groq_model_candidates():
-                try:
-                    response = requests.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": model,
-                            "messages": [
-                                {"role": "system", "content": f"{few_shot}\nReturn only one Cypher MATCH query, no markdown."},
-                                {"role": "user", "content": f"Q: {question}\nCypher:"}
-                            ],
-                            "temperature": 0.1
-                        },
-                        timeout=10,
-                    )
-                    response.raise_for_status()
-                    raw_text = response.json()["choices"][0]["message"]["content"]
-                    for line in raw_text.splitlines():
-                        stripped = line.strip().strip("`").replace("cypher", "").strip()
-                        if "MATCH" in stripped.upper() and "RETURN" in stripped.upper():
-                            cypher = stripped
-                            method = "groq_llm"
-                            break
-                    if cypher:
-                        break
-                except Exception as exc:
-                    logger.warning("Groq NL-to-Cypher failed for %s: %s. Trying fallback model or regex.", model, exc)
+
+        prompt = f"{few_shot}\nReturn only one Cypher MATCH query, no markdown.\nQ: {question}\nCypher:"
+
+        from app.services.rag_llm import call_llm
+        try:
+            result = call_llm(prompt, max_tokens=200)
+            cypher_raw = result.get("text", "")
+            method = result.get("source", "fallback")
+            for line in cypher_raw.split("\n"):
+                stripped = line.strip().strip("`").replace("cypher", "").strip()
+                if "MATCH" in stripped.upper() or "RETURN" in stripped.upper():
+                    cypher = stripped
+                    break
+        except Exception as e:
+            logger.warning(f"LLM nl-to-cypher failed: {e}")
         fallback = self._regex_query(question)
         payload = {
             "question": question,
@@ -745,7 +754,7 @@ Cypher: MATCH (s:Slice {id:'slice_1'})--(n) RETURN count(n)
             "parameters": fallback["parameters"],
             "result": fallback["result"],
             "answer": fallback.get("answer", ""),
-            "confidence": 0.88 if method == "groq_llm" else 0.65,
+            "confidence": self._llm_confidence(method),
         }
         db.audit("nl_to_cypher", payload)
         return payload

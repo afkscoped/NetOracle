@@ -96,6 +96,13 @@
           </div>
           <div class="kpi-label">Fault Probability</div>
           <div class="kpi-sub" id="kpiProbSub">No alert yet</div>
+          <div class="conformal-interval" id="conformalInterval" title="Split Conformal Prediction interval with ACI adaptation">
+            <span class="ci-bar">
+              <span class="ci-fill" id="ciFill"></span>
+              <span class="ci-point" id="ciPoint"></span>
+            </span>
+            <span class="ci-label" id="ciLabel">q̂ = --</span>
+          </div>
         </div>
         <div class="kpi-card" id="kpi-auc">
           <div class="kpi-ring-wrap">
@@ -220,6 +227,15 @@
         </div>
         <div class="terminal narrative-output" id="benchOutput">Click "Run Benchmark" to evaluate CTGNN vs. baselines.</div>
         <div id="benchChart" class="bar-chart"></div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header">
+          <h2>Adaptive Conformal Inference <span class="badge-muted">§6.3 Novel</span></h2>
+          <button class="btn-secondary mini" id="btnRefreshACI">Refresh ACI</button>
+        </div>
+        <div class="aci-status" id="aciPanel">
+          <div class="empty-state">ACI tracking starts after calibration + live predictions. Click "Refresh ACI" to check status.</div>
+        </div>
       </div>
       <div class="panel glass-panel">
         <div class="panel-header"><h2>DAG History <span class="badge-muted">latest snapshots</span></h2></div>
@@ -542,6 +558,7 @@
   </div>
 </div>
 
+<div id="toastContainer"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>

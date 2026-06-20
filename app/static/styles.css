@@ -299,6 +299,91 @@ body::after {
 .kpi-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; text-align:center; }
 .kpi-sub { font-size: 10px; color: var(--cyan); text-align: center; font-family: var(--mono); }
 
+/* ── Conformal Prediction Interval Bar ──────────────────────────────── */
+.conformal-interval {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin-top: 6px; padding: 4px 8px;
+  border-radius: 8px; background: rgba(0,245,255,0.04);
+  border: 1px solid rgba(0,245,255,0.1);
+  min-width: 120px;
+}
+.ci-bar {
+  position: relative; width: 100%; height: 6px;
+  background: rgba(255,255,255,0.08); border-radius: 3px; overflow: visible;
+}
+.ci-fill {
+  position: absolute; top: 0; height: 100%;
+  background: linear-gradient(90deg, rgba(0,245,255,0.3), rgba(0,245,255,0.6));
+  border-radius: 3px; transition: left 0.4s ease, width 0.4s ease;
+}
+.ci-point {
+  position: absolute; top: -2px; width: 10px; height: 10px;
+  background: var(--cyan); border-radius: 50%; border: 2px solid var(--bg);
+  box-shadow: 0 0 6px rgba(0,245,255,0.6);
+  transform: translateX(-50%); transition: left 0.4s ease;
+}
+.ci-label {
+  font-size: 9px; font-family: var(--mono); color: var(--muted);
+  text-align: center; white-space: nowrap;
+}
+.ci-label.aci-active { color: var(--green); }
+
+/* ── ACI Status Panel ────────────────────────────────────────────────── */
+.aci-status {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;
+  padding: 12px 0;
+}
+.aci-metric {
+  display: flex; flex-direction: column; gap: 4px; align-items: center;
+  padding: 10px 12px; border-radius: 10px;
+  background: rgba(179,71,245,0.06); border: 1px solid rgba(179,71,245,0.15);
+}
+.aci-metric .aci-val {
+  font-size: 20px; font-weight: 800; font-family: var(--mono); color: var(--purple);
+}
+.aci-metric .aci-lbl {
+  font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.aci-metric.good .aci-val { color: var(--green); }
+.aci-metric.warn .aci-val { color: var(--amber); }
+.aci-history-table {
+  width: 100%; border-collapse: collapse; font-size: 10px; font-family: var(--mono);
+  margin-top: 8px;
+}
+.aci-history-table th {
+  color: var(--muted); font-weight: 600; padding: 4px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.06); text-align: left;
+}
+.aci-history-table td {
+  padding: 3px 6px; color: var(--text); border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.aci-history-table tr.covered td { color: var(--green); }
+.aci-history-table tr.missed td { color: var(--red); }
+
+/* ── Toast Notification System ──────────────────────────────────────── */
+#toastContainer {
+  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+  display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none;
+}
+.toast {
+  padding: 10px 18px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  font-family: var(--mono); pointer-events: auto;
+  background: rgba(13,19,34,0.96); border: 1px solid rgba(255,255,255,0.1);
+  backdrop-filter: blur(12px);
+  animation: toastIn 0.3s ease, toastOut 0.4s ease 3.6s forwards;
+  max-width: 320px;
+}
+.toast.info  { border-color: rgba(0,245,255,0.4); color: var(--cyan); }
+.toast.warn  { border-color: rgba(255,184,0,0.4);  color: var(--amber); }
+.toast.success { border-color: rgba(0,255,136,0.4); color: var(--green); }
+.toast.error { border-color: rgba(255,51,102,0.4); color: var(--red); }
+@keyframes toastIn  { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform: translateY(0); } }
+@keyframes toastOut { from { opacity:1; } to { opacity:0; transform: translateY(12px); } }
+
+/* ── mini button ─────────────────────────────────────────────────────── */
+.btn-secondary.mini { font-size: 10px; padding: 3px 10px; }
+
+
 /* ── Two-column layout ──────────────────────────────────────────────── */
 .two-col {
   display: grid; grid-template-columns: 1fr 1fr; gap: 18px;

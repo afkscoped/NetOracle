@@ -317,25 +317,43 @@ function updateSourceBanner(source) {
   const el = $('datasourceBanner');
   if (!el) return;
   el.className = 'status-pill source-badge';
+
+  // Detect source category for transition toasts
+  const isLive = source === 'open5gs_live' || source === 'prometheus';
+  const isPartial = source === 'open5gs_partial' || source === 'csv_stream';
+  const prevIsLive = _lastSource === 'open5gs_live' || _lastSource === 'prometheus';
+  const prevIsPartial = _lastSource === 'open5gs_partial' || _lastSource === 'csv_stream';
+
+  if (source !== _lastSource && _lastSource !== null) {
+    if (isLive && !prevIsLive) {
+      toast('⬤ Data source switched to LIVE Open5GS telemetry', 'success');
+    } else if (!isLive && !isPartial && (prevIsLive || prevIsPartial)) {
+      toast('◯ Data source fell back to SIMULATED telemetry', 'warn');
+    } else if (isPartial && !prevIsPartial && !prevIsLive) {
+      toast('⬤ Partial live data: Prometheus reachable, some NFs simulated', 'info');
+    }
+  }
+  _lastSource = source;
+
   if (source === 'open5gs_live') {
     el.classList.add('source-live');
-    el.textContent = '\u2B24 LIVE — Open5GS';
+    el.textContent = '\u2B24 LIVE \u2014 Open5GS';
     el.title = 'Receiving real metrics from Open5GS + Prometheus';
   } else if (source === 'open5gs_partial') {
     el.classList.add('source-partial');
-    el.textContent = '\u2B24 PARTIAL — Open5GS';
+    el.textContent = '\u2B24 PARTIAL \u2014 Open5GS';
     el.title = 'Prometheus reachable but some NFs are falling back to simulation';
   } else if (source === 'open5gs_simulated' || source === 'simulated') {
     el.classList.add('source-simulated');
     el.textContent = '\u25CB SIMULATED';
-    el.title = 'Open5GS / Prometheus not reachable — using simulated telemetry';
+    el.title = 'Open5GS / Prometheus not reachable \u2014 using simulated telemetry';
   } else if (source === 'csv_stream') {
     el.classList.add('source-partial');
     el.textContent = '\u2B24 CSV STREAM';
     el.title = 'Streaming from uploaded CSV file';
   } else if (source === 'prometheus') {
     el.classList.add('source-live');
-    el.textContent = '\u2B24 LIVE — Prometheus';
+    el.textContent = '\u2B24 LIVE \u2014 Prometheus';
     el.title = 'Receiving real metrics from Prometheus adapter';
   } else {
     el.classList.add('source-simulated');
@@ -348,6 +366,139 @@ function setRing(id, pct) {
   const ring = $(id);
   if (!ring) return;
   ring.style.setProperty('--pct', Math.max(0, Math.min(100, pct)));
+}
+
+// ── Conformal Interval Bar ────────────────────────────────────────────
+/**
+ * Update the Split Conformal Prediction interval bar under the fault probability KPI.
+ * @param {object} alertData - the alert object from the latest tick payload
+ */
+function updateConformalInterval(alertData) {
+  const fill   = $('ciFill');
+  const point  = $('ciPoint');
+  const label  = $('ciLabel');
+  if (!fill || !point || !label) return;
+
+  const prob  = alertData?.fault_probability ?? null;
+  const lo    = alertData?.prob_lower ?? null;
+  const hi    = alertData?.prob_upper ?? null;
+  const qhat  = alertData?.q_hat ?? null;
+  const aciOn = alertData?.aci_active ?? false;
+
+  if (prob === null || lo === null || hi === null) {
+    label.textContent = 'q\u0302 = --';
+    label.className = 'ci-label';
+    return;
+  }
+
+  // Map [0,1] probability range to [0%,100%] bar position
+  fill.style.left  = `${lo * 100}%`;
+  fill.style.width = `${(hi - lo) * 100}%`;
+  point.style.left = `${prob * 100}%`;
+
+  const qStr = qhat !== null ? `q\u0302=${qhat.toFixed(3)}` : '';
+  const ciStr = `[${lo.toFixed(2)}, ${hi.toFixed(2)}]`;
+  label.textContent = `${qStr}  ${ciStr}${aciOn ? '  \u2022 ACI' : ''}`;
+  label.className = `ci-label${aciOn ? ' aci-active' : ''}`;
+}
+
+// ── ACI Status Panel Renderer ─────────────────────────────────────────
+function renderAciPanel(data) {
+  const panel = $('aciPanel');
+  if (!panel) return;
+  if (!data) {
+    panel.innerHTML = '<div class="empty-state">ACI report unavailable. Run predictions first.</div>';
+    return;
+  }
+
+  const cal = data.calibration || {};
+  const aci = data.aci || {};
+
+  if (!cal.is_calibrated) {
+    panel.innerHTML = `<div class="empty-state">Conformal predictor not calibrated. 
+    Calibration file missing — run training pipeline first.</div>`;
+    return;
+  }
+
+  if (aci.aci_updates === 0) {
+    panel.innerHTML = `
+      <div class="aci-metric">
+        <span class="aci-val">${cal.q_hat !== null ? cal.q_hat.toFixed(4) : '--'}</span>
+        <span class="aci-lbl">Initial q̂</span>
+      </div>
+      <div class="aci-metric">
+        <span class="aci-val">${cal.coverage_guarantee || '--'}</span>
+        <span class="aci-lbl">Coverage Target</span>
+      </div>
+      <div class="aci-metric">
+        <span class="aci-val">${cal.n_calibration || '--'}</span>
+        <span class="aci-lbl">Cal. Samples</span>
+      </div>
+      <div class="empty-state" style="grid-column:1/-1; margin-top:4px">
+        ACI adaptation starts when you call /api/conformal/update with resolved fault labels.
+      </div>`;
+    return;
+  }
+
+  const covMet = aci.coverage_met;
+  const empCov = (aci.empirical_coverage * 100).toFixed(1);
+  const targCov = (aci.target_coverage * 100).toFixed(1);
+  const drift = aci.coverage_drift > 0 ? `+${(aci.coverage_drift*100).toFixed(1)}%` : `${(aci.coverage_drift*100).toFixed(1)}%`;
+
+  // Build history table rows
+  const rows = (aci.recent_history || []).slice(-8).reverse().map(h => `
+    <tr class="${h.covered ? 'covered' : 'missed'}">
+      <td>${h.t}</td>
+      <td>${h.prediction.toFixed(3)}</td>
+      <td>${h.true_label}</td>
+      <td>${h.covered ? '\u2713' : '\u2717'}</td>
+      <td>${h.old_q_hat.toFixed(4)}</td>
+      <td>${h.new_q_hat.toFixed(4)}</td>
+      <td>${h.running_coverage.toFixed(3)}</td>
+    </tr>`).join('');
+
+  panel.innerHTML = `
+    <div class="aci-metric${covMet ? ' good' : ' warn'}">
+      <span class="aci-val">${empCov}%</span>
+      <span class="aci-lbl">Empirical Coverage</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${targCov}%</span>
+      <span class="aci-lbl">Target (1-\u03b1)</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${drift}</span>
+      <span class="aci-lbl">Coverage Drift</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${aci.current_q_hat?.toFixed(4) ?? '--'}</span>
+      <span class="aci-lbl">Current q̂</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${aci.aci_updates}</span>
+      <span class="aci-lbl">ACI Updates</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${aci.gamma ?? '--'}</span>
+      <span class="aci-lbl">\u03b3 (step size)</span>
+    </div>
+    <div style="grid-column:1/-1">
+      <table class="aci-history-table">
+        <thead><tr>
+          <th>t</th><th>p̂</th><th>y</th><th>\u2713/\u2717</th><th>q̂ old</th><th>q̂ new</th><th>Cov.</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function refreshAciPanel() {
+  try {
+    const r = await api('/api/conformal/report');
+    renderAciPanel(r.data);
+  } catch (e) {
+    console.warn('ACI report failed:', e);
+  }
 }
 
 function updateKpis(alert, diagnosis, remediation, metrics = state.metrics) {
@@ -373,8 +524,19 @@ function updateKpis(alert, diagnosis, remediation, metrics = state.metrics) {
   }
 }
 
-function toast(message) {
-  console.warn(message);
+// ── Toast Notification System ────────────────────────────────────────
+let _lastSource = null;
+
+function toast(message, type = 'info', duration = 4000) {
+  // type: 'info' | 'success' | 'warn' | 'error'
+  console.warn(`[toast:${type}]`, message);
+  const container = $('toastContainer');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), duration + 400);
 }
 
 class TelemetryChart {
@@ -662,14 +824,20 @@ function handleTick(payload) {
     state.metrics = payload.metrics;
     updateKpis(payload.alert || state.latestAlert, null, null, state.metrics);
   }
+  if (payload.alert) {
+    state.latestAlert = payload.alert;
+    renderAlert(payload.alert);
+    // Update conformal interval bar with prediction interval from alert
+    updateConformalInterval(payload.alert);
+  }
   if (payload.proactive) {
     state.proactive = payload.proactive;
     html('proactivePanel', renderForecastCard(state.proactive));
   }
   if (payload.realtime) html('realtimePanel', renderRealtimeAnalysis(payload.realtime));
-  if (payload.alert) renderAlert(payload.alert);
   state.charts.dagMini?.updateLastAlert?.(payload.alert);
 }
+
 
 function connectWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -727,11 +895,13 @@ function setupButtons() {
   });
   $('btnRefresh')?.addEventListener('click', () => refreshAll().catch(toast));
   $('btnRefreshDAG')?.addEventListener('click', () => refreshDAG().catch(toast));
+  $('btnRefreshACI')?.addEventListener('click', () => refreshAciPanel().catch(e => toast(e.message, 'error')));
   $('btnTopologyRefresh')?.addEventListener('click', () => refreshTopology().catch(toast));
   $('auditFilter')?.addEventListener('change', () => refreshAudit().catch(toast));
   $('severity')?.addEventListener('input', e => text('sevVal', e.target.value));
   $('btnBenchmark')?.addEventListener('click', runBenchmark);
   $('btnHopfield')?.addEventListener('click', runHopfield);
+
   $('btnPolicy')?.addEventListener('click', showPolicy);
   $('btnAdaptiveWireless')?.addEventListener('click', buildAdaptiveWirelessPlan);
   $('btnStressTest')?.addEventListener('click', runStressTest);

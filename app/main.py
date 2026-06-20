@@ -860,6 +860,17 @@ def rl_train_episode(payload: dict[str, Any] = Body(default={})) -> dict:
     )}
 
 
+@app.get("/api/rl/constraints")
+def rl_constraints() -> dict:
+    """
+    CMDP Safety Constraint Status — §6.5 Novel Contribution.
+    Returns per-constraint Lagrangian λ, violation rates, lockdown status.
+    Use this to verify the safety filter is adapting correctly during live ops.
+    """
+    from app.services.adaptive_rl import get_cmdp_status
+    return {"ok": True, "data": get_cmdp_status()}
+
+
 @app.get("/api/cloud/status")
 def cloud_status() -> dict:
     return {"ok": True, "data": cloud_sync_service.config_status()}

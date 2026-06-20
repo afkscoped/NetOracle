@@ -46,36 +46,46 @@ import requests
  
 logger = logging.getLogger(__name__)
  
-# ── Metric name constants (Open5GS Prometheus labels) ─────────────────────
- 
+# ─────────────────────────────────────────────────────────────────────────────
+# METRIC NAME CONSTANTS
+# ─────────────────────────────────────────────────────────────────────────────
+# All Open5GS-specific metric names below are ASSUMED based on Open5GS source
+# code inspection and OPEN5GS_INTEGRATION.md docs.
+# To verify, run when WSL2 stack is live:
+#   curl -s http://localhost:9095/metrics | grep -E "^amf_" | head -30
+#   curl -s http://localhost:9096/metrics | grep -E "^smf_" | head -30
+#   curl -s http://localhost:9097/metrics | grep -E "^upf_" | head -30
+#   curl -s http://localhost:9098/metrics | grep -E "^pcf_" | head -30
+# Update comments to: # VERIFIED AGAINST Open5GS vX.X.X on DATE
+
 OPEN5GS_METRICS = {
-    # AMF metrics
-    "amf_session":      "amf_session_count",
-    "amf_ue":           "amf_ue_context_count",
-    "amf_reg_attempt":  "amf_registration_request_total",
-    "amf_reg_success":  "amf_registration_success_total",
- 
-    # SMF metrics
-    "smf_pdu":          "smf_pdu_session_count",
-    "smf_pdu_created":  "smf_pdu_session_created_total",
-    "smf_pdu_released": "smf_pdu_session_released_total",
- 
-    # UPF metrics
-    "upf_rx_bytes":     "upf_rx_bytes_total",
-    "upf_tx_bytes":     "upf_tx_bytes_total",
-    "upf_rx_pkts":      "upf_rx_packets_total",
-    "upf_tx_pkts":      "upf_tx_packets_total",
-    "upf_drop_pkts":    "upf_dropped_packets_total",
- 
-    # PCF metrics
-    "pcf_rules":        "pcf_policy_rule_count",
- 
-    # Node exporter (system)
-    "node_cpu_idle":    'node_cpu_seconds_total{mode="idle"}',
-    "node_mem_avail":   "node_memory_MemAvailable_bytes",
-    "node_mem_total":   "node_memory_MemTotal_bytes",
-    "node_net_rx":      "node_network_receive_bytes_total",
-    "node_net_tx":      "node_network_transmit_bytes_total",
+    # AMF metrics — ASSUMED METRIC NAMES — VERIFY AGAINST LIVE /metrics OUTPUT
+    "amf_session":      "amf_session_count",          # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "amf_ue":           "amf_ue_context_count",        # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "amf_reg_attempt":  "amf_registration_request_total",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "amf_reg_success":  "amf_registration_success_total",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+
+    # SMF metrics — ASSUMED METRIC NAMES — VERIFY AGAINST LIVE /metrics OUTPUT
+    "smf_pdu":          "smf_pdu_session_count",       # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "smf_pdu_created":  "smf_pdu_session_created_total",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "smf_pdu_released": "smf_pdu_session_released_total", # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+
+    # UPF metrics — ASSUMED METRIC NAMES — VERIFY AGAINST LIVE /metrics OUTPUT
+    "upf_rx_bytes":     "upf_rx_bytes_total",          # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "upf_tx_bytes":     "upf_tx_bytes_total",          # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "upf_rx_pkts":      "upf_rx_packets_total",        # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "upf_tx_pkts":      "upf_tx_packets_total",        # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+    "upf_drop_pkts":    "upf_dropped_packets_total",   # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+
+    # PCF metrics — ASSUMED METRIC NAMES — VERIFY AGAINST LIVE /metrics OUTPUT
+    "pcf_rules":        "pcf_policy_rule_count",       # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+
+    # Node exporter metrics — these are standard prometheus-node-exporter names (verified)
+    "node_cpu_idle":    'node_cpu_seconds_total{mode="idle"}',  # VERIFIED: standard node_exporter
+    "node_mem_avail":   "node_memory_MemAvailable_bytes",        # VERIFIED: standard node_exporter
+    "node_mem_total":   "node_memory_MemTotal_bytes",            # VERIFIED: standard node_exporter
+    "node_net_rx":      "node_network_receive_bytes_total",      # VERIFIED: standard node_exporter
+    "node_net_tx":      "node_network_transmit_bytes_total",     # VERIFIED: standard node_exporter
 }
  
 # NF port assignments (match your Open5GS config)
@@ -284,13 +294,13 @@ class Open5GSAdapter:
     def _fetch_amf_metrics(self) -> dict:
         """Fetch AMF-specific Prometheus metrics."""
         raw = self.prom.query_all({
-            "session_count": "amf_session_count",
-            "ue_count":      "amf_ue_context_count",
-            "reg_attempts":  "amf_registration_request_total",
-            "reg_success":   "amf_registration_success_total",
-            "cpu_idle":      'avg(rate(node_cpu_seconds_total{mode="idle"}[30s])) * 100',
-            "mem_avail":     "node_memory_MemAvailable_bytes",
-            "mem_total":     "node_memory_MemTotal_bytes",
+            "session_count": "amf_session_count",           # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "ue_count":      "amf_ue_context_count",          # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "reg_attempts":  "amf_registration_request_total",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "reg_success":   "amf_registration_success_total",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "cpu_idle":      'avg(rate(node_cpu_seconds_total{mode="idle"}[30s])) * 100',  # VERIFIED: node_exporter
+            "mem_avail":     "node_memory_MemAvailable_bytes",  # VERIFIED: node_exporter
+            "mem_total":     "node_memory_MemTotal_bytes",      # VERIFIED: node_exporter
         })
  
         session_count = raw.get("session_count") or 0.0
@@ -334,9 +344,9 @@ class Open5GSAdapter:
     def _fetch_smf_metrics(self) -> dict:
         """Fetch SMF-specific Prometheus metrics."""
         raw = self.prom.query_all({
-            "pdu_count":    "smf_pdu_session_count",
-            "pdu_created":  "smf_pdu_session_created_total",
-            "pdu_released": "smf_pdu_session_released_total",
+            "pdu_count":    "smf_pdu_session_count",           # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "pdu_created":  "smf_pdu_session_created_total",   # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "pdu_released": "smf_pdu_session_released_total",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
         })
  
         pdu_count   = raw.get("pdu_count")   or 0.0
@@ -372,11 +382,11 @@ class Open5GSAdapter:
         UPF is the most metric-rich NF — actual byte/packet counters.
         """
         raw = self.prom.query_all({
-            "rx_bytes":  "upf_rx_bytes_total",
-            "tx_bytes":  "upf_tx_bytes_total",
-            "rx_pkts":   "upf_rx_packets_total",
-            "tx_pkts":   "upf_tx_packets_total",
-            "drop_pkts": "upf_dropped_packets_total",
+            "rx_bytes":  "upf_rx_bytes_total",          # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "tx_bytes":  "upf_tx_bytes_total",          # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "rx_pkts":   "upf_rx_packets_total",        # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "tx_pkts":   "upf_tx_packets_total",        # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
+            "drop_pkts": "upf_dropped_packets_total",   # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
         })
  
         rx_bytes   = raw.get("rx_bytes")  or 0.0
@@ -422,7 +432,7 @@ class Open5GSAdapter:
     def _fetch_pcf_metrics(self) -> dict:
         """Fetch PCF-specific Prometheus metrics."""
         raw = self.prom.query_all({
-            "rules": "pcf_policy_rule_count",
+            "rules": "pcf_policy_rule_count",  # ASSUMED METRIC NAME — VERIFY AGAINST LIVE /metrics OUTPUT
         })
         rule_count = raw.get("rules") or 0.0
  
@@ -461,8 +471,10 @@ class Open5GSAdapter:
         gNB metrics from UERANSIM.
         UERANSIM doesn't export Prometheus natively, so we derive
         from node-exporter network interface stats on the uesimtun0 interface.
+        Interface name 'uesimtun0' is standard UERANSIM behaviour — verified.
         """
         raw = self.prom.query_all({
+            # VERIFIED: standard node_exporter metric names; device label depends on uesimtun0 existing
             "net_rx": 'rate(node_network_receive_bytes_total{device="uesimtun0"}[30s])',
             "net_tx": 'rate(node_network_transmit_bytes_total{device="uesimtun0"}[30s])',
         })
@@ -504,20 +516,31 @@ class Open5GSAdapter:
         """
         Returns one telemetry frame per Open5GS NF.
         Uses real Prometheus metrics if available, falls back to simulation.
+
+        SOURCE TAGGING CONTRACT (enforced here, propagates to WebSocket):
+          - "open5gs_live"      : Prometheus reachable AND per-NF fetch succeeded
+          - "open5gs_partial"   : Prometheus reachable BUT this NF's fetch failed (exception)
+          - "open5gs_simulated" : Prometheus unreachable — entire tick is simulated
         """
         self._tick_count += 1
         ts = datetime.now(timezone.utc).isoformat()
         frames = []
- 
+
         prom_available = self.prom.is_available()
- 
-        if not prom_available and not self._fallback_warned:
-            logger.warning(
-                "[Open5GS] Prometheus not reachable at "
-                f"{self.prom.base_url}. Falling back to simulation. "
-                "Start Open5GS in WSL2 to get real metrics."
-            )
-            self._fallback_warned = True
+
+        if not prom_available:
+            # Log on first fallback AND every 60 ticks thereafter (not just once)
+            if not self._fallback_warned or self._tick_count % 60 == 0:
+                logger.warning(
+                    "[Open5GS] Prometheus not reachable at "
+                    f"{self.prom.base_url}. Falling back to simulation. "
+                    "Start Open5GS in WSL2 to get real metrics. "
+                    f"(tick #{self._tick_count})"
+                )
+                self._fallback_warned = True
+        else:
+            # Reset warning flag so it re-triggers if Prometheus goes down again
+            self._fallback_warned = False
  
         # Fetch metrics per NF (or simulate if unreachable)
         nf_fetchers = {
@@ -530,18 +553,22 @@ class Open5GSAdapter:
         }
  
         mongo_sessions = self.mongo.get_slice_session_breakdown()
- 
+
         for nf_key, fetcher in nf_fetchers.items():
             node_info = NF_NODE_MAP[nf_key]
- 
+            nf_source = "open5gs_simulated"  # default
+
             if prom_available:
                 try:
                     metrics = fetcher()
+                    nf_source = "open5gs_live"  # only live if fetch succeeded
                 except Exception as e:
-                    logger.error(f"[Open5GS] {nf_key} metrics failed: {e}")
+                    logger.error(f"[Open5GS] {nf_key} metrics fetch failed: {e} — using simulated fallback")
                     metrics = self._sim_fallback_metrics()
+                    nf_source = "open5gs_partial"  # partial: Prometheus up but this NF's data failed
             else:
                 metrics = self._sim_fallback_metrics()
+                # nf_source stays "open5gs_simulated"
  
             frame = {
                 "timestamp":       ts,
@@ -556,7 +583,7 @@ class Open5GSAdapter:
                 "prb_utilization": metrics["prb_utilization"],
                 "fault_label":     metrics["fault_label"],
                 "fault_type":      metrics["fault_type"],
-                "source":          "open5gs_live" if prom_available else "open5gs_simulated",
+                "source":          nf_source,  # per-NF source tag (open5gs_live/partial/simulated)
             }
  
             # Enrich with MongoDB session data if available

@@ -132,6 +132,14 @@ class Database:
             return dict_from_row(row) if row else None
 
     def insert_telemetry(self, frame: dict[str, Any]) -> None:
+        # Build the metrics dict — include source so it round-trips through DB
+        # (source is NOT a separate column — stored in metrics_json for schema compat)
+        metrics = dict(frame.get("metrics") or {})
+        for key in ("cpu", "memory", "latency_ms", "packet_loss", "throughput_mbps", "prb_utilization"):
+            if key in frame and key not in metrics:
+                metrics[key] = frame[key]
+        if "source" in frame:
+            metrics["_source"] = frame["source"]  # prefixed to avoid collision
         self.execute(
             """
             INSERT INTO telemetry(timestamp, slice_id, node_id, node_type, metrics_json, fault_label, fault_type)
@@ -139,7 +147,7 @@ class Database:
             """,
             (
                 frame["timestamp"], frame["slice_id"], frame["node_id"], frame["node_type"],
-                encode(frame["metrics"]), int(frame.get("fault_label", 0)), frame.get("fault_type")
+                encode(metrics), int(frame.get("fault_label", 0)), frame.get("fault_type")
             ),
         )
 
@@ -147,7 +155,11 @@ class Database:
         rows = self.fetch_all("SELECT * FROM telemetry ORDER BY id DESC LIMIT ?", (limit,))
         rows.reverse()
         for row in rows:
-            row["metrics"] = decode(row.pop("metrics_json"), {})
+            metrics = decode(row.pop("metrics_json"), {})
+            # Promote _source back to top-level field for downstream consumers
+            if "_source" in metrics:
+                row["source"] = metrics.pop("_source")
+            row["metrics"] = metrics
         return rows
 
     def telemetry_for_node(self, slice_id: str, node_id: str, limit: int = 60) -> list[dict[str, Any]]:
@@ -157,7 +169,10 @@ class Database:
         )
         rows.reverse()
         for row in rows:
-            row["metrics"] = decode(row.pop("metrics_json"), {})
+            metrics = decode(row.pop("metrics_json"), {})
+            if "_source" in metrics:
+                row["source"] = metrics.pop("_source")
+            row["metrics"] = metrics
         return rows
 
     def upsert_alert(self, alert: dict[str, Any]) -> None:

@@ -308,6 +308,42 @@ function setStatus(mode, label) {
   html('wsStatus', `<span class="pulse-dot ${cls}"></span>${label}`);
 }
 
+/**
+ * Update the prominent data-source banner (live / partial / simulated).
+ * Called on every WS tick so it immediately reflects reality.
+ * @param {string} source - one of: open5gs_live, open5gs_partial, open5gs_simulated, simulated, csv_stream, prometheus
+ */
+function updateSourceBanner(source) {
+  const el = $('datasourceBanner');
+  if (!el) return;
+  el.className = 'status-pill source-badge';
+  if (source === 'open5gs_live') {
+    el.classList.add('source-live');
+    el.textContent = '\u2B24 LIVE — Open5GS';
+    el.title = 'Receiving real metrics from Open5GS + Prometheus';
+  } else if (source === 'open5gs_partial') {
+    el.classList.add('source-partial');
+    el.textContent = '\u2B24 PARTIAL — Open5GS';
+    el.title = 'Prometheus reachable but some NFs are falling back to simulation';
+  } else if (source === 'open5gs_simulated' || source === 'simulated') {
+    el.classList.add('source-simulated');
+    el.textContent = '\u25CB SIMULATED';
+    el.title = 'Open5GS / Prometheus not reachable — using simulated telemetry';
+  } else if (source === 'csv_stream') {
+    el.classList.add('source-partial');
+    el.textContent = '\u2B24 CSV STREAM';
+    el.title = 'Streaming from uploaded CSV file';
+  } else if (source === 'prometheus') {
+    el.classList.add('source-live');
+    el.textContent = '\u2B24 LIVE — Prometheus';
+    el.title = 'Receiving real metrics from Prometheus adapter';
+  } else {
+    el.classList.add('source-simulated');
+    el.textContent = '\u25CB SIMULATED';
+    el.title = `Source: ${source || 'unknown'}`;
+  }
+}
+
 function setRing(id, pct) {
   const ring = $(id);
   if (!ring) return;
@@ -610,6 +646,12 @@ async function refreshAll() {
 function handleTick(payload) {
   state.tickCount += 1;
   text('tickCount', state.tickCount);
+
+  // Update source banner on every tick so it immediately reflects data origin
+  if (payload.source || (payload.frames?.length && payload.frames[0]?.source)) {
+    updateSourceBanner(payload.source || payload.frames[0]?.source);
+  }
+
   if (payload.frames?.length) {
     const frames = payload.frames.map(normalizeFrame);
     state.telemetry.push(...frames);
@@ -673,7 +715,16 @@ function setupTabs() {
 }
 
 function setupButtons() {
-  $('btnTick')?.addEventListener('click', async () => { const r = await api('/api/telemetry/tick', { method: 'POST' }); handleTick({ frames: r.data }); });
+  $('btnTick')?.addEventListener('click', async () => {
+    // POST tick and pass the FULL payload to handleTick (frames + alert + proactive + metrics + source)
+    const r = await api('/api/telemetry/tick', { method: 'POST' });
+    // /api/telemetry/tick returns {ok, data: frames[]} — wrap it into a tick-shaped payload
+    const frames = Array.isArray(r.data) ? r.data : [];
+    const tickSource = frames[0]?.source || 'unknown';
+    handleTick({ frames, source: tickSource });
+    // Refresh other panels that a tick affects
+    await Promise.allSettled([refreshProactive(), refreshMetrics()]);
+  });
   $('btnRefresh')?.addEventListener('click', () => refreshAll().catch(toast));
   $('btnRefreshDAG')?.addEventListener('click', () => refreshDAG().catch(toast));
   $('btnTopologyRefresh')?.addEventListener('click', () => refreshTopology().catch(toast));

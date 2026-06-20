@@ -417,6 +417,49 @@ def proactive_latest() -> dict:
     return {"ok": True, "data": proactive_engine.latest()}
 
 
+@app.get("/api/conformal/report")
+def conformal_report() -> dict:
+    """
+    ACI (Adaptive Conformal Inference) adaptation report.
+    Returns current q̂, empirical coverage, ACI update history.
+    Use this to verify the conformal predictor is maintaining coverage
+    after switching from simulated to live Open5GS data.
+    """
+    report = intelligence_service._conformal.aci_report()
+    cal_info = {
+        "is_calibrated": intelligence_service._conformal.is_calibrated,
+        "q_hat": round(intelligence_service._conformal.q_hat, 6)
+            if intelligence_service._conformal.q_hat is not None else None,
+        "n_calibration": intelligence_service._conformal.n_calibration,
+        "alpha": intelligence_service._conformal.alpha,
+        "coverage_guarantee": f"{(1 - intelligence_service._conformal.alpha)*100:.0f}%",
+    }
+    return {"ok": True, "data": {"calibration": cal_info, "aci": report}}
+
+
+@app.post("/api/conformal/update")
+def conformal_aci_update(prediction: float, true_label: float) -> dict:
+    """
+    ACI feedback loop: provide a resolved fault label to update q̂.
+
+    Call this when you have a ground-truth outcome for a previous prediction.
+    Example: after a fault injection resolves and you know whether the alert
+    was correct (true_label=1) or a false positive (true_label=0).
+
+    Body params:
+        prediction: the fault_probability that was emitted at alert time
+        true_label: 0 (false alarm) or 1 (confirmed fault)
+    """
+    update = intelligence_service._conformal.update(prediction, true_label)
+    db.audit("conformal_aci_update", {
+        "prediction": prediction,
+        "true_label": true_label,
+        **update,
+    })
+    return {"ok": True, "data": update}
+
+
+
 @app.get("/api/proactive/forecast")
 def proactive_forecast(limit: int = 240) -> dict:
     return {"ok": True, "data": proactive_engine.forecast(limit)}

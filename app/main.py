@@ -1,6 +1,8 @@
 import asyncio
+import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +11,7 @@ from typing import Any
  
 logger = logging.getLogger(__name__)
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -18,6 +20,7 @@ import mimetypes
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
 
+from app.auth import require_write_auth
 from app.database import db
 from app.schemas import DemoRunRequest, FaultInjectionRequest, NaturalLanguageQuery
 from app.settings import get_settings
@@ -41,9 +44,36 @@ from app.services.wireless import wireless_optimizer_service
 from app.services.xai import xai_service
 from scripts.generate_realistic_data import generate_realistic_rows, write_csv
 
-
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+
+# ─── Background Job Registry ────────────────────────────────────────────────
+# In-memory job store for long-running tasks (benchmarks, training).
+_jobs: dict[str, dict[str, Any]] = {}
+
+
+def _new_job(label: str) -> str:
+    job_id = str(uuid.uuid4())[:8]
+    _jobs[job_id] = {
+        "job_id": job_id, "label": label, "status": "queued",
+        "result": None, "error": None,
+        "started_at": datetime.now(timezone.utc).isoformat(), "completed_at": None,
+    }
+    return job_id
+
+
+async def _run_job(job_id: str, fn, *args, **kwargs) -> None:
+    """Execute sync fn in a thread pool; update job state on finish."""
+    _jobs[job_id]["status"] = "running"
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+        _jobs[job_id].update({"status": "done", "result": result})
+    except Exception as exc:
+        _jobs[job_id].update({"status": "error", "error": str(exc)})
+        logger.error(f"[Job {job_id}] failed: {exc}", exc_info=True)
+    finally:
+        _jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
 
 
 class TelemetryConnectionManager:
@@ -148,6 +178,50 @@ def index() -> FileResponse:
 @app.get("/twin")
 def twin() -> FileResponse:
     return FileResponse(STATIC_DIR / "twin.html")
+
+
+@app.get("/health", tags=["ops"])
+def health() -> dict:
+    """Liveness probe — returns 200 if the process is running."""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/ready", tags=["ops"])
+def ready() -> dict:
+    """Readiness probe — checks DB writability, model load, conformal calibration."""
+    checks: dict[str, bool] = {}
+    # DB check
+    try:
+        db.audit_entries(1)
+        checks["db"] = True
+    except Exception:
+        checks["db"] = False
+    # Model check
+    checks["model_loaded"] = bool(intelligence_service._model_loaded)
+    # Conformal check
+    checks["conformal_calibrated"] = bool(intelligence_service._conformal.is_calibrated)
+    all_ready = all(checks.values())
+    return {
+        "status": "ready" if all_ready else "degraded",
+        "checks": checks,
+        "model": "CTGNN" if checks["model_loaded"] else "heuristic_fallback",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/jobs/{job_id}", tags=["ops"])
+def job_status(job_id: str) -> dict:
+    """Poll status of a background job (benchmark run, training, export-retrain)."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found. It may have expired.")
+    return {"ok": True, "data": job}
+
+
+@app.get("/api/jobs", tags=["ops"])
+def list_jobs() -> dict:
+    """List all active/recent background jobs."""
+    return {"ok": True, "data": list(_jobs.values())}
 
 
 @app.get("/api/status")
@@ -810,8 +884,12 @@ def training_metrics() -> dict:
 
 
 @app.post("/api/benchmarks/run")
-def run_benchmarks(scenarios: int = 60) -> dict:
-    return {"ok": True, "data": benchmark_service.run(scenarios)}
+async def run_benchmarks(scenarios: int = 60) -> dict:
+    """Queue a benchmark run as a background job. Poll /api/jobs/{job_id} for results."""
+    job_id = _new_job(f"benchmark_run(scenarios={scenarios})")
+    asyncio.create_task(_run_job(job_id, benchmark_service.run, scenarios))
+    return {"ok": True, "data": {"job_id": job_id, "status": "queued", "poll": f"/api/jobs/{job_id}"}}
+
 
 
 @app.post("/api/wireless/hopfield")

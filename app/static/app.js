@@ -576,6 +576,12 @@ class TelemetryChart {
     this.g.selectAll('.fault-marker').data(data.filter(d => d.fault_label)).enter().append('line')
       .attr('x1', d => x(d.i)).attr('x2', d => x(d.i)).attr('y1', 0).attr('y2', innerH)
       .attr('stroke', '#ff3366').attr('stroke-dasharray', '4 5').attr('opacity', 0.55);
+    // Source indicator strip: green=live, amber=partial, gray=simulated
+    const sourceColorMap = { open5gs_live: '#00ff88', prometheus: '#00ff88', open5gs_partial: '#ffb800', csv_stream: '#ffb800' };
+    this.g.selectAll('.src-tick').data(data).enter().append('rect')
+      .attr('x', d => x(d.i) - 1).attr('y', innerH + 2).attr('width', 2).attr('height', 4)
+      .attr('fill', d => sourceColorMap[d.source] || 'rgba(107,138,170,0.3)')
+      .attr('rx', 1);
   }
 }
 

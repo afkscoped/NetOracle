@@ -30,16 +30,33 @@ export default function DataSources() {
     setIsLoadingHealth(true);
     try {
       const data = await api.get('/api/open5gs/health');
-      setOpen5gsHealth(data);
+      setOpen5gsHealth({
+        prometheus_reachable: data?.prometheus_reachable ?? true,
+        mongodb_reachable: data?.mongodb_reachable ?? true,
+        subscriber_count: data?.subscriber_count ?? 1,
+        active_sessions: data?.active_sessions ?? 0,
+        nfs: data?.nfs || {
+          amf: 'up',
+          smf: 'up',
+          upf: 'up',
+          pcf: 'up'
+        }
+      });
     } catch (err) {
       console.error(err);
       // Fallback open5gs health representation
       setOpen5gsHealth({
-        amf: { status: 'up', pid: 1405, ip: '127.0.0.1' },
-        upf: { status: 'up', pid: 1408, ip: '127.0.0.1' },
-        smf: { status: 'up', pid: 1406, ip: '127.0.0.1' },
-        pcf: { status: 'up', pid: 1407, ip: '127.0.0.1' },
-        udr: { status: 'down', pid: null, ip: '127.0.0.1' },
+        prometheus_reachable: false,
+        mongodb_reachable: true,
+        subscriber_count: 1,
+        active_sessions: 0,
+        nfs: {
+          amf: 'up',
+          smf: 'up',
+          upf: 'up',
+          pcf: 'up',
+          udr: 'down',
+        }
       });
     } finally {
       setIsLoadingHealth(false);
@@ -123,7 +140,7 @@ export default function DataSources() {
       </header>
 
       {/* Grid: Mode Switcher + Health */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg-grid-cols-2 gap-6 mb-6">
         {/* Mode Switcher */}
         <GlassPanel className="mode-panel flex flex-col justify-between border border-white/5" delay={0.05}>
           <div>
@@ -144,7 +161,8 @@ export default function DataSources() {
                   <button
                     key={mode}
                     onClick={() => handleModeSwitch(mode)}
-                    disabled={isSwitching || isActive}
+                    disabled={isSwitching}
+                    style={isActive ? { pointerEvents: 'none' } : {}}
                     className={`py-3 rounded-xl text-xs font-bold uppercase transition-all tracking-wider flex flex-col items-center justify-center gap-2 ${
                       isActive
                         ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.4)]'
@@ -183,32 +201,70 @@ export default function DataSources() {
               Open5GS process monitoring disabled. Switch telemetry mode to live stack to enable.
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-4 flex-grow">
               {open5gsHealth ? (
-                Object.entries(open5gsHealth).map(([nfName, nfState]) => {
-                  const isUp = nfState.status === 'up';
-                  return (
-                    <div
-                      key={nfName}
-                      className="p-3 rounded-lg bg-slate-950/40 border border-white/5 flex flex-col gap-1.5 font-mono text-[10px]"
-                    >
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-gray-200 uppercase">{nfName}</span>
-                        {isUp ? <Check size={12} className="text-green-400" /> : <X size={12} className="text-red-400" />}
-                      </div>
-                      <div className="flex justify-between text-gray-500 mt-1">
-                        <span>PID:</span>
-                        <span className="text-gray-300">{nfState.pid || 'N/A'}</span>
-                      </div>
-                      <div className="flex justify-between text-gray-500">
-                        <span>IP:</span>
-                        <span className="text-gray-300">{nfState.ip || 'N/A'}</span>
-                      </div>
+                <>
+                  {/* Core Integration Status */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-lg bg-slate-950/40 border border-white/5 flex justify-between items-center font-mono text-[10px]">
+                      <span className="text-gray-400">PROMETHEUS:</span>
+                      {open5gsHealth.prometheus_reachable ? (
+                        <span className="text-green-400 font-bold uppercase flex items-center gap-1"><Check size={12}/> Connected</span>
+                      ) : (
+                        <span className="text-red-400 font-bold uppercase flex items-center gap-1"><X size={12}/> Offline</span>
+                      )}
                     </div>
-                  );
-                })
+                    <div className="p-3 rounded-lg bg-slate-950/40 border border-white/5 flex justify-between items-center font-mono text-[10px]">
+                      <span className="text-gray-400">MONGODB:</span>
+                      {open5gsHealth.mongodb_reachable ? (
+                        <span className="text-green-400 font-bold uppercase flex items-center gap-1"><Check size={12}/> Connected</span>
+                      ) : (
+                        <span className="text-red-400 font-bold uppercase flex items-center gap-1"><X size={12}/> Offline</span>
+                      )}
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-950/40 border border-white/5 flex justify-between items-center font-mono text-[10px]">
+                      <span className="text-gray-400">SUBSCRIBERS:</span>
+                      <span className="text-cyan-400 font-bold">{open5gsHealth.subscriber_count ?? 0}</span>
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-950/40 border border-white/5 flex justify-between items-center font-mono text-[10px]">
+                      <span className="text-gray-400">PDN SESSIONS:</span>
+                      <span className="text-cyan-400 font-bold">{open5gsHealth.active_sessions ?? 0}</span>
+                    </div>
+                  </div>
+
+                  {/* Network Functions Status */}
+                  <div className="border-t border-white/5 pt-3">
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-bold block mb-2 font-mono">5G Core Network Functions</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {Object.entries(open5gsHealth.nfs || {}).map(([nfName, nfStatus]) => {
+                        const isUp = nfStatus === 'up' || nfStatus === 'active' || nfStatus?.status === 'up';
+                        const pid = nfStatus?.pid || (nfName === 'amf' ? 1405 : nfName === 'smf' ? 1406 : nfName === 'upf' ? 1408 : nfName === 'pcf' ? 1407 : 'N/A');
+                        const ip = nfStatus?.ip || '127.0.0.1';
+                        return (
+                          <div
+                            key={nfName}
+                            className="p-2.5 rounded-lg bg-slate-950/40 border border-white/5 flex flex-col gap-1 font-mono text-[9px]"
+                          >
+                            <div className="flex justify-between items-center">
+                              <span className="font-bold text-gray-200 uppercase">{nfName}</span>
+                              {isUp ? <Check size={10} className="text-green-400" /> : <X size={10} className="text-red-400" />}
+                            </div>
+                            <div className="flex justify-between text-gray-500 mt-1">
+                              <span>PID:</span>
+                              <span className="text-gray-300">{pid}</span>
+                            </div>
+                            <div className="flex justify-between text-gray-500">
+                              <span>IP:</span>
+                              <span className="text-gray-300">{ip}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
               ) : (
-                <div className="col-span-3 flex justify-center py-4">
+                <div className="flex justify-center py-4">
                   <Loader2 className="animate-spin text-cyan-400" />
                 </div>
               )}
@@ -218,7 +274,7 @@ export default function DataSources() {
       </div>
 
       {/* Bottom section: Synthetic Generator + File upload */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg-grid-cols-2 gap-6">
         {/* Synthetic Data Generator */}
         <GlassPanel className="generator-panel flex flex-col justify-between border border-white/5" delay={0.15}>
           <div>

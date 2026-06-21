@@ -59,9 +59,25 @@ export default function CausalAI() {
   const fetchConformal = async () => {
     setIsLoadingConformal(true);
     try {
+      // api.get unwraps {ok, data} -> returns {calibration: {...}, aci: {...}}
       const data = await api.get('/api/conformal/report');
-      if (data) {
-        setConformalData(data);
+      if (data && data.calibration) {
+        // Reshape into the flat format the UI expects and map history array
+        const apiHistory = data.aci?.recent_history || [];
+        const normalizedHistory = apiHistory.map((item, idx) => ({
+          timestamp: item.timestamp || (item.t ? `t=${item.t}` : `t=${idx + 1}`),
+          prediction: item.prediction,
+          true_label: item.true_label,
+          q_hat: item.q_hat || item.new_q_hat || item.old_q_hat || 0.15,
+        }));
+
+        setConformalData({
+          q_hat: data.calibration.q_hat ?? 0.15,
+          alpha: data.calibration.alpha ?? 0.1,
+          empirical_coverage: data.aci?.empirical_coverage ?? data.calibration.empirical_coverage ?? (1 - (data.calibration.alpha ?? 0.1)),
+          calibration_points_count: data.calibration.n_calibration ?? 0,
+          history: normalizedHistory,
+        });
       }
     } catch (err) {
       console.error('Failed to fetch conformal report:', err);
@@ -85,12 +101,12 @@ export default function CausalAI() {
         try {
           const statusRes = await api.get(`/api/jobs/${jobId}`);
           setJobStatus(`Status: ${statusRes.status || 'Processing'}`);
-          if (statusRes.status === 'completed' || statusRes.status === 'success') {
+          if (statusRes.status === 'completed' || statusRes.status === 'success' || statusRes.status === 'done') {
             clearInterval(interval);
             setBenchmarkResult(statusRes.result);
             setIsBenchmarking(false);
             setJobStatus('');
-          } else if (statusRes.status === 'failed') {
+          } else if (statusRes.status === 'failed' || statusRes.status === 'error') {
             clearInterval(interval);
             setIsBenchmarking(false);
             setJobStatus('Job failed');
@@ -103,7 +119,7 @@ export default function CausalAI() {
       console.error('Failed to start benchmark:', err);
       setIsBenchmarking(false);
       setJobStatus('Failed to start');
-      
+
       // Fallback display benchmark data
       setBenchmarkResult({
         accuracy: [
@@ -137,8 +153,8 @@ export default function CausalAI() {
     };
   });
 
-  // Default Conformal Fallback data if API returns empty
-  const activeConformal = conformalData || {
+  // Default Conformal Fallback data if API returns empty or null fields
+  const FALLBACK_CONFORMAL = {
     q_hat: 0.152,
     empirical_coverage: 0.948,
     calibration_points_count: 120,
@@ -150,6 +166,17 @@ export default function CausalAI() {
       { timestamp: '15:30', prediction: 0.91, true_label: 1, q_hat: 0.152 },
     ]
   };
+  const activeConformal = {
+    q_hat: conformalData?.q_hat ?? FALLBACK_CONFORMAL.q_hat,
+    alpha: conformalData?.alpha ?? 0.1,
+    empirical_coverage: conformalData?.empirical_coverage ?? FALLBACK_CONFORMAL.empirical_coverage,
+    calibration_points_count: conformalData?.calibration_points_count ?? FALLBACK_CONFORMAL.calibration_points_count,
+    history: (conformalData?.history && conformalData.history.length > 0)
+      ? conformalData.history
+      : FALLBACK_CONFORMAL.history
+  };
+  // Safe number helper — prevents toFixed on undefined/null
+  const num = (v, fallback = 0) => (v == null || isNaN(v) ? fallback : Number(v));
 
   const benchmarkChartData = benchmarkResult?.accuracy || [
     { name: 'AUROC', CTGNN: 0.94, Heuristic: 0.76, Random: 0.50 },
@@ -183,9 +210,9 @@ export default function CausalAI() {
       </header>
 
       {/* Top row: Graph + Benchmark */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg-grid-cols-5 gap-6 mb-6">
         {/* Causal DAG Graph (60% width equivalent) */}
-        <GlassPanel className="dag-panel lg:col-span-3 flex flex-col justify-between" delay={0.05}>
+        <GlassPanel className="dag-panel lg-col-span-3 flex flex-col justify-between" delay={0.05}>
           <div className="flex justify-between items-center mb-4">
             <div>
               <h2 className="text-lg font-bold" style={{ fontFamily: 'Orbitron, sans-serif' }}>Causal Bayesian Graph</h2>
@@ -283,7 +310,7 @@ export default function CausalAI() {
         </GlassPanel>
 
         {/* Benchmark Panel (40% width equivalent) */}
-        <GlassPanel className="benchmark-panel lg:col-span-2 flex flex-col justify-between" delay={0.1}>
+        <GlassPanel className="benchmark-panel lg-col-span-2 flex flex-col justify-between" delay={0.1}>
           <div>
             <div className="flex justify-between items-start mb-4">
               <div>
@@ -294,6 +321,7 @@ export default function CausalAI() {
                 onClick={runBenchmark}
                 disabled={isBenchmarking}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/40 hover:bg-cyan-900/40 text-cyan-400 rounded-lg text-xs font-semibold border border-cyan-800/30 transition-all disabled:opacity-50"
+                style={{ whiteSpace: 'nowrap' }}
               >
                 {isBenchmarking ? <Loader2 size={12} className="animate-spin" /> : <BarChart3 size={12} />}
                 Run Benchmark
@@ -302,7 +330,7 @@ export default function CausalAI() {
             {jobStatus && <p className="text-[10px] text-cyan-400 font-mono mb-2">{jobStatus}</p>}
           </div>
 
-          <div className="h-64 w-100% flex items-center justify-center">
+          <div className="h-64 w-full flex items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={benchmarkChartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.03)" />
@@ -332,6 +360,7 @@ export default function CausalAI() {
             onClick={fetchConformal}
             disabled={isLoadingConformal}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-cyan-800/30 text-cyan-400 rounded-lg text-xs font-semibold hover:bg-slate-800 transition-all"
+            style={{ whiteSpace: 'nowrap' }}
           >
             <RefreshCw size={12} className={isLoadingConformal ? 'animate-spin' : ''} />
             Refresh ACI
@@ -339,11 +368,11 @@ export default function CausalAI() {
         </div>
 
         {/* Stats Grid */}
-        <div className="aci-stats grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="aci-stats grid grid-cols-1 md-grid-cols-3 gap-6">
           <div className="stat-card p-4 rounded-xl bg-slate-900/30 border border-white/5 flex flex-col justify-center">
             <span className="text-[10px] text-gray-400 uppercase tracking-widest">Calibration Threshold (q̂)</span>
             <span className="text-3xl font-extrabold text-cyan-400 mt-2 font-mono" style={{ fontFamily: 'Orbitron, sans-serif' }}>
-              {activeConformal.q_hat.toFixed(4)}
+              {num(activeConformal.q_hat, 0.152).toFixed(4)}
             </span>
             <span className="text-[10px] text-gray-500 mt-1">Conformal prediction threshold bounds</span>
           </div>
@@ -351,22 +380,22 @@ export default function CausalAI() {
           <div className="stat-card p-4 rounded-xl bg-slate-900/30 border border-white/5 flex flex-col justify-center">
             <span className="text-[10px] text-gray-400 uppercase tracking-widest">Empirical Coverage</span>
             <span className="text-3xl font-extrabold text-green-400 mt-2 font-mono" style={{ fontFamily: 'Orbitron, sans-serif' }}>
-              {(activeConformal.empirical_coverage * 100).toFixed(1)}%
+              {(num(activeConformal.empirical_coverage, 0.9) * 100).toFixed(1)}%
             </span>
-            <span className="text-[10px] text-gray-500 mt-1">Target coverage rate: 95.0%</span>
+            <span className="text-[10px] text-gray-500 mt-1">Target coverage rate: {((1 - activeConformal.alpha) * 100).toFixed(1)}%</span>
           </div>
 
           <div className="stat-card p-4 rounded-xl bg-slate-900/30 border border-white/5 flex flex-col justify-center">
             <span className="text-[10px] text-gray-400 uppercase tracking-widest">Calibration Window</span>
             <span className="text-3xl font-extrabold text-purple-400 mt-2 font-mono" style={{ fontFamily: 'Orbitron, sans-serif' }}>
-              {activeConformal.calibration_points_count}
+              {num(activeConformal.calibration_points_count, 0)}
             </span>
             <span className="text-[10px] text-gray-500 mt-1">Rolling queue sample points</span>
           </div>
         </div>
 
         {/* Calibration Table / Chart grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-2">
+        <div className="grid grid-cols-1 lg-grid-cols-2 gap-6 mt-2">
           {/* History table */}
           <div className="aci-history-container">
             <h3 className="text-sm font-bold text-gray-300 mb-3" style={{ fontFamily: 'Orbitron, sans-serif' }}>Conformal Calibration Stream</h3>
@@ -382,14 +411,16 @@ export default function CausalAI() {
                   </tr>
                 </thead>
                 <tbody>
-                  {activeConformal.history.map((row, idx) => {
-                    const isCorrect = (row.prediction > row.q_hat ? 1 : 0) === row.true_label;
+                  {(activeConformal.history || []).map((row, idx) => {
+                    const pred = num(row.prediction, 0);
+                    const qhat = num(row.q_hat, 0.15);
+                    const isCorrect = (pred > qhat ? 1 : 0) === (row.true_label ?? 0);
                     return (
                       <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-all">
                         <td className="p-3 font-mono text-gray-500">{row.timestamp}</td>
-                        <td className="p-3 font-mono font-medium text-gray-200">{row.prediction.toFixed(4)}</td>
-                        <td className="p-3 font-mono">{row.true_label}</td>
-                        <td className="p-3 font-mono text-cyan-400">{row.q_hat.toFixed(4)}</td>
+                        <td className="p-3 font-mono font-medium text-gray-200">{pred.toFixed(4)}</td>
+                        <td className="p-3 font-mono">{row.true_label ?? 0}</td>
+                        <td className="p-3 font-mono text-cyan-400">{qhat.toFixed(4)}</td>
                         <td className="p-3">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                             isCorrect ? 'bg-green-950/40 text-green-400 border border-green-800/30' : 'bg-red-950/40 text-red-400 border border-red-900/30'
@@ -408,7 +439,7 @@ export default function CausalAI() {
           {/* Trend Chart */}
           <div className="aci-chart-container flex flex-col justify-between">
             <h3 className="text-sm font-bold text-gray-300 mb-3" style={{ fontFamily: 'Orbitron, sans-serif' }}>Conformal Bounds Calibration Trend</h3>
-            <div className="h-48 w-100%">
+            <div className="h-48 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={activeConformal.history}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />

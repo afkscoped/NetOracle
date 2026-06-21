@@ -22,6 +22,7 @@ import {
   WifiOff,
   Bell,
   Cpu,
+  Globe,
 } from 'lucide-react';
 import './App.css';
 
@@ -89,6 +90,9 @@ function AppContent() {
               <NavLink to="/topology" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Network size={16} /> Topology
               </NavLink>
+              <a href="/twin" target="_blank" rel="noopener noreferrer" className="nav-item">
+                <Globe size={16} className="text-cyan-400" /> 3D Digital Twin
+              </a>
               <NavLink to="/diagnosis" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                 <AlertTriangle size={16} /> Diagnostics
               </NavLink>

@@ -12,6 +12,115 @@ export default function AuditTrail() {
   const [isLoading, setIsLoading] = useState(false);
   const [expandedEvent, setExpandedEvent] = useState(null);
 
+  // Maps backend specific event_type strings to general UI filter categories
+  const getUiEventType = (backendType) => {
+    const type = backendType || '';
+    if (type.includes('predict') || type.includes('forecast') || type.includes('conformal')) {
+      return 'prediction';
+    }
+    if (type.includes('localis') || type.includes('topology') || type.includes('graphrag') || type.includes('cypher')) {
+      return 'localization';
+    }
+    if (type.includes('diagnos') || type.includes('explain') || type.includes('analysis')) {
+      return 'diagnosis';
+    }
+    if (type.includes('remediat') || type.includes('rl_') || type.includes('hopfield') || type.includes('avoidance') || type.includes('decision') || type.includes('fix')) {
+      return 'remediation';
+    }
+    return 'other';
+  };
+
+  // Safe details formatter helper to extract user-friendly descriptions from database payloads
+  const getEventDetails = (event) => {
+    if (event.details) return event.details;
+    if (!event.payload) return 'System audit log entry.';
+    
+    const p = event.payload;
+    if (typeof p === 'string') return p;
+    if (p.details) return p.details;
+    if (p.message) return p.message;
+    if (p.reason) return p.reason;
+    if (p.description) return p.description;
+
+    const type = event.event_type || '';
+    if (type === 'hopfield_allocation') {
+      return `HNN allocated ${p.channels} channels to ${p.users} users. Fairness: ${p.fairness_index ?? 'N/A'}`;
+    }
+    if (type === 'rl_recommendation') {
+      return `CMDP recommendation: selected "${p.action}" under state "${p.state}" (strategy: ${p.strategy || 'N/A'})`;
+    }
+    if (type === 'rl_policy_updated') {
+      return `SafeRL updated Q-value for state "${p.state}", action "${p.action}". New Q: ${p.new_value}`;
+    }
+    if (type === 'fault_predicted') {
+      return `CTGNN Alert: Predicted ${p.fault_type} on node ${p.node_id} (Risk: ${((p.fault_probability || 0) * 100).toFixed(0)}%)`;
+    }
+    if (type === 'fault_diagnosed') {
+      return `RAG root cause: "${p.root_cause}" (Confidence: ${((p.confidence || 0) * 100).toFixed(0)}%)`;
+    }
+    if (type === 'fault_localised') {
+      return `CausalDiscovery path trace for node ${p.node_id} (Alert ID: ${p.alert_id || 'N/A'})`;
+    }
+    if (type === 'conformal_aci_update') {
+      return `Conformal prediction recalibrated: q_hat = ${p.new_q_hat ?? p.q_hat ?? 'N/A'} (coverage: ${p.running_coverage ? `${(p.running_coverage * 100).toFixed(0)}%` : 'N/A'})`;
+    }
+    if (type === 'telemetry_tick') {
+      return `Telemetry ingestion: processed ${p.frames ?? 0} frames from source "${p.source || 'N/A'}"`;
+    }
+    if (type === 'topology_seeded') {
+      return `Topology database seeded: ${p.nodes} nodes, ${p.edges} edges`;
+    }
+    if (type === 'remediation_decision') {
+      return `Remediation executed: "${p.action}" on node ${p.node_id || 'N/A'}. Status: ${p.status || 'applied'}`;
+    }
+    if (type === 'realtime_fault_analysis') {
+      if (p.alert) {
+        return `Real-time anomaly detected on ${p.alert.node_id} (${p.alert.fault_type}, Risk: ${((p.alert.fault_probability || 0) * 100).toFixed(0)}%). Quick fix: "${p.quick_fix?.action || 'None'}".`;
+      }
+      if (p.quick_fix) {
+        return `Proactive alert on ${p.quick_fix.node_id}. Quick fix recommended: "${p.quick_fix.action}".`;
+      }
+      return `Real-time network state analyzed. No active faults or alerts.`;
+    }
+    if (type === 'fix_simulation') {
+      return `Simulated remediation "${p.action}" on node ${p.node_id} reduced fault risk by ${((p.risk_reduction || 0) * 100).toFixed(0)}%.`;
+    }
+    if (type === 'proactive_forecast') {
+      if (p.top) {
+        return `Proactive forecast for ${p.top.node_id} on ${p.top.slice_id}: SLA anomaly projected in ${p.top.predicted_breach_time_min ?? 'N/A'} mins (Risk: ${((p.top.risk_t_plus_10 || 0) * 100).toFixed(0)}%). Recommended action: "${p.top.recommended_action}".`;
+      }
+      return `Proactive forecast generated. No high-risk SLA anomalies detected across slices.`;
+    }
+    if (type === 'open5gs_demo_analysis') {
+      return `Open5GS analysis: processed ${p.frame_count ?? 0} frames. Quick fix action: "${p.quick_fix?.action || 'None'}".`;
+    }
+    if (type === 'graphrag_ingestion') {
+      return `GraphRAG Ingestion: added ${p.nodes_added} nodes, ${p.edges_added} edges from LLM relationships extraction.`;
+    }
+    if (type === 'explain_tab') {
+      return `Explainability request for tab "${p.tab}" (Node: ${p.node_id || 'N/A'}). Summary: "${p.headline}".`;
+    }
+    if (type === 'nl_to_cypher') {
+      return `GraphRAG chatbot query: "${p.question}" (method: ${p.method}, confidence: ${p.confidence}).`;
+    }
+    if (type === 'telemetry_uploaded') {
+      return `Telemetry uploaded: file "${p.filename}" containing ${p.frames} telemetry ticks.`;
+    }
+    if (type === 'topology_uploaded') {
+      return `Topology uploaded: file "${p.filename}" containing ${p.nodes} nodes, ${p.edges} edges.`;
+    }
+    if (type === 'synthetic_generation') {
+      return `Synthetic telemetry generation: created ${p.loaded_rows} ticks. Output: "${p.output}".`;
+    }
+
+    try {
+      const keys = Object.keys(p).slice(0, 3).join(', ');
+      return `Payload contains keys: [${keys}]`;
+    } catch (e) {
+      return 'Audited event payload.';
+    }
+  };
+
   const fetchAuditEvents = async () => {
     setIsLoading(true);
     try {
@@ -41,10 +150,16 @@ export default function AuditTrail() {
 
   // Filter events based on search term and dropdown filter
   const filteredEvents = events.filter((event) => {
+    const details = getEventDetails(event);
+    const eventType = event.event_type || '';
+    const uiType = getUiEventType(eventType);
+
     const matchesSearch =
-      event.details.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      event.event_type.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = typeFilter === 'all' || event.event_type === typeFilter;
+      details.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      eventType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      uiType.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesType = typeFilter === 'all' || uiType === typeFilter;
     return matchesSearch && matchesType;
   });
 
@@ -54,7 +169,7 @@ export default function AuditTrail() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `netoracle-audit-trail-${new Date().toISOString().slice(0,10)}.json`;
+    link.download = `netoracle-audit-trail-${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -66,7 +181,7 @@ export default function AuditTrail() {
           <h1 className="text-3xl font-bold flex items-center gap-3" style={{ fontFamily: 'Orbitron, sans-serif' }}>
             <FileText className="text-cyan-400" /> Immutable Audit Trail
           </h1>
-          <p className="text-sm text-gray-400 mt-1">Immutable execution log logs of GNN predictions, Causal localization discovery, and Safe RL mitigations</p>
+          <p className="text-sm text-gray-400 mt-1">Immutable execution logs of GNN predictions, Causal localization discovery, and Safe RL mitigations</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -110,6 +225,7 @@ export default function AuditTrail() {
             <option value="localization">Localizations</option>
             <option value="diagnosis">Diagnoses</option>
             <option value="remediation">Remediations</option>
+            <option value="other">Other Operations</option>
           </select>
         </div>
       </GlassPanel>
@@ -128,20 +244,21 @@ export default function AuditTrail() {
                 <tr className="bg-slate-950/80 text-gray-400 font-semibold border-b border-white/10">
                   <th className="p-3 w-10"></th>
                   <th className="p-3 w-48">Timestamp</th>
-                  <th className="p-3 w-32">Event Type</th>
+                  <th className="p-3 w-48">Event Type</th>
                   <th className="p-3">Details Summary</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredEvents.map((event, idx) => {
                   const isExpanded = expandedEvent === idx;
+                  const uiType = getUiEventType(event.event_type);
                   const typeColors = {
                     prediction: 'bg-cyan-950/40 text-cyan-400 border-cyan-800/30',
                     localization: 'bg-purple-950/40 text-purple-400 border-purple-800/30',
                     diagnosis: 'bg-amber-950/40 text-amber-400 border-amber-800/30',
                     remediation: 'bg-green-950/40 text-green-400 border-green-800/30',
                   };
-                  const colorClass = typeColors[event.event_type] || 'bg-slate-950/40 text-slate-400 border-slate-800/30';
+                  const colorClass = typeColors[uiType] || 'bg-slate-950/40 text-slate-400 border-slate-800/30';
 
                   return (
                     <React.Fragment key={idx}>
@@ -161,7 +278,7 @@ export default function AuditTrail() {
                           </span>
                         </td>
                         <td className="p-3 text-gray-300 font-mono truncate max-w-xs md:max-w-md">
-                          {event.details}
+                          {getEventDetails(event)}
                         </td>
                       </tr>
                       {isExpanded && (
@@ -171,9 +288,9 @@ export default function AuditTrail() {
                               <div className="flex gap-2 items-center text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
                                 <ArrowRight size={10} /> Full event trace
                               </div>
-                              <p className="bg-slate-950/40 p-3 rounded border border-white/5 text-gray-300">
-                                {event.details}
-                              </p>
+                              <pre className="bg-slate-950/60 p-4 rounded border border-white/5 text-gray-300 overflow-x-auto max-h-96 whitespace-pre-wrap">
+                                {event.payload ? JSON.stringify(event.payload, null, 2) : getEventDetails(event)}
+                              </pre>
                             </div>
                           </td>
                         </tr>

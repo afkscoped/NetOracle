@@ -47,8 +47,8 @@ export default function Dashboard() {
   // Process data for charts
   const chartData = telemetry.map((t) => ({
     time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : '',
-    cpu: t.cpu != null ? Math.round(t.cpu * 100) : 0,
-    memory: t.memory != null ? Math.round(t.memory * 100) : 0,
+    cpu: t.cpu != null ? Math.round(t.cpu * 10) / 10 : 0,
+    memory: t.memory != null ? Math.round(t.memory) : 0,
     latency: t.latency_ms || 0,
     packetLoss: t.packet_loss != null ? Math.round(t.packet_loss * 100) : 0,
     throughput: t.throughput_mbps || 0,
@@ -139,7 +139,7 @@ export default function Dashboard() {
           <div className="flex flex-col w-1/2">
             <span className="kpi-label text-xs uppercase tracking-wider text-gray-400">Live Throughput</span>
             <span className="kpi-value text-2xl font-bold mt-2 text-green-400" style={{ fontFamily: 'Orbitron, sans-serif' }}>
-              {telemetry.length > 0 ? `${Math.round(telemetry[telemetry.length - 1].throughput_mbps || 0)} Mbps` : '0 Mbps'}
+              {telemetry.length > 0 ? `${(telemetry[telemetry.length - 1].throughput_mbps || 0).toFixed(1)} Mbps` : '0.0 Mbps'}
             </span>
             <span className="text-[10px] text-gray-500 mt-1">Total aggregated load</span>
           </div>
@@ -197,7 +197,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="h-80 w-100% relative">
+          <div className="h-80 w-full relative">
             {chartData.length === 0 ? (
               <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
                 Waiting for telemetry data stream...

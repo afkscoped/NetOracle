@@ -32,6 +32,12 @@ except ImportError:
     print("FATAL: requests not installed. Run: pip install requests")
     sys.exit(1)
 
+# Force stdout/stderr to be UTF-8 to prevent encoding crashes with emojis/box-drawing on Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 BASE_URL = os.getenv("NETORACLE_URL", "http://127.0.0.1:8000")
 PROM_URL = os.getenv("OPEN5GS_PROMETHEUS_URL", "http://localhost:9090")
@@ -110,11 +116,11 @@ if prom_ok:
         # (label, query, must_be_nonzero)
         ("node_cpu metric (node_exporter)", "rate(node_cpu_seconds_total[30s])", False),  # can be near 0 at idle
         ("node_memory metric (node_exporter)", "node_memory_MemTotal_bytes", True),
-        ("uesimtun0 RX rate (gNB proxy)", 'rate(node_network_receive_bytes_total{device="uesimtun0"}[60s])', False),
-        # Open5GS NF metrics — ASSUMED names, may return None if name is wrong
-        ("AMF session_count (ASSUMED NAME)", "amf_session_count", False),
-        ("UPF rx_bytes_total (ASSUMED NAME)", "upf_rx_bytes_total", False),
-        ("SMF pdu_session_count (ASSUMED NAME)", "smf_pdu_session_count", False),
+        ("ogstun RX rate (gNB proxy)", 'rate(node_network_receive_bytes_total{device="ogstun"}[60s])', False),
+        # Open5GS NF metrics — VERIFIED names from live stack
+        ("AMF active UE count", "ran_ue", False),
+        ("UPF GTP RX packets", "fivegs_ep_n3_gtp_indatapktn3upf", False),
+        ("SMF active sessions", "pfcp_sessions_active", False),
     ]
 
     for label, query, must_nonzero in metric_checks:

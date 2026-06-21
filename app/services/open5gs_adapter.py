@@ -111,24 +111,26 @@ class Open5GSMetricCache:
     Counters are monotonically increasing; we need per-interval deltas
     to compute rates (e.g., packets/s, bytes/s).
     """
- 
+
     def __init__(self, window: int = 60):
         self._prev: dict[str, float] = {}
-        self._prev_ts: float = time.time()
+        self._prev_ts: dict[str, float] = {}
         self._history: deque = deque(maxlen=window)
- 
+
     def delta(self, key: str, current_value: float) -> float:
         """Returns the delta since last call. Returns 0 on first call."""
         prev = self._prev.get(key, current_value)
         delta = max(0.0, current_value - prev)
         self._prev[key] = current_value
         return delta
- 
+
     def rate_per_second(self, key: str, current_value: float) -> float:
         """Returns per-second rate of a counter."""
         now = time.time()
-        elapsed = now - self._prev_ts
+        prev_ts = self._prev_ts.get(key, now - 5.0)  # assume 5s default interval for first calculation
+        elapsed = now - prev_ts
         d = self.delta(key, current_value)
+        self._prev_ts[key] = now
         return d / elapsed if elapsed > 0 else 0.0
  
  
@@ -463,6 +465,17 @@ class Open5GSAdapter:
         tx_bytes   = raw.get("tx_bytes")  or 0.0
         rx_pkts    = raw.get("rx_pkts")   or 0.0
         drop_pkts  = raw.get("drop_pkts") or 0.0
+
+        # Fallback to ogstun device metrics from node-exporter if UPF metrics are zero
+        if rx_bytes == 0.0 and tx_bytes == 0.0:
+            og_raw, _ = self.prom.query_all_with_evidence({
+                "og_rx": 'node_network_receive_bytes_total{device="ogstun"}',
+                "og_tx": 'node_network_transmit_bytes_total{device="ogstun"}',
+                "og_rx_pkts": 'node_network_receive_packets_total{device="ogstun"}',
+            })
+            rx_bytes = og_raw.get("og_rx") or 0.0
+            tx_bytes = og_raw.get("og_tx") or 0.0
+            rx_pkts  = og_raw.get("og_rx_pkts") or 0.0
  
         # Rates (per-second deltas)
         rx_bytes_rate  = self.cache.rate_per_second("upf_rx_B",  rx_bytes)
@@ -537,27 +550,25 @@ class Open5GSAdapter:
             "fault_label": 0,
             "fault_type": "",
         }
- 
+
     def _fetch_gnb_metrics(self) -> dict:
         """
         gNB metrics from UERANSIM.
         UERANSIM doesn't export Prometheus natively, so we derive
-        from node-exporter network interface stats on the uesimtun0 interface.
-        Interface name 'uesimtun0' is standard UERANSIM behaviour — verified.
+        from node-exporter network interface stats on the ogstun interface.
         """
         raw, query_evidence = self.prom.query_all_with_evidence({
-            # VERIFIED: standard node_exporter metric names; device label depends on uesimtun0 existing
-            "net_rx": 'rate(node_network_receive_bytes_total{device="uesimtun0"}[30s])',
-            "net_tx": 'rate(node_network_transmit_bytes_total{device="uesimtun0"}[30s])',
+            "net_rx": 'rate(node_network_receive_bytes_total{device="ogstun"}[30s])',
+            "net_tx": 'rate(node_network_transmit_bytes_total{device="ogstun"}[30s])',
         })
- 
+
         rx_rate = raw.get("net_rx") or 0.0
         tx_rate = raw.get("net_tx") or 0.0
         throughput = round((rx_rate + tx_rate) * 8 / 1e6, 3)
- 
+
         prb_util = min(1.0, throughput / 100.0)  # 100 Mbps = full PRB
         cpu = min(90.0, 20.0 + throughput * 0.3)
- 
+
         return {
             "cpu": round(cpu, 2),
             "memory": self._sim_memory(),
@@ -569,6 +580,7 @@ class Open5GSAdapter:
             "fault_type": "",
             "_evidence": query_evidence,
         }
+
  
     # ── Simulation fallbacks ─────────────────────────────────────────────
  
@@ -803,6 +815,17 @@ class Open5GSAdapter:
                 health["nfs"][nf] = "down"
  
         health["subscriber_count"]   = self.mongo.get_subscriber_count()
-        health["active_sessions"]    = self.mongo.get_active_sessions()
+        active_sessions = self.mongo.get_active_sessions()
+        if active_sessions == 0 and health["prometheus_reachable"]:
+            try:
+                # Query Prometheus for active PDU sessions
+                val = self.prom.query("fivegs_smffunction_sm_sessionnbr")
+                if val is None:
+                    val = self.prom.query("pfcp_sessions_active")
+                if val is not None:
+                    active_sessions = int(val)
+            except Exception as e:
+                logger.warning(f"Failed to query active sessions from Prometheus: {e}")
+        health["active_sessions"]    = active_sessions
         health["tick_count"]         = self._tick_count
         return health

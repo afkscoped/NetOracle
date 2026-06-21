@@ -21,9 +21,20 @@ export function AppProvider({ children }) {
   // Fetch initial telemetry
   const refreshTelemetry = async () => {
     try {
+      // api.get unwraps {ok,data} -> returns array directly
       const data = await api.get('/api/telemetry/recent');
       if (Array.isArray(data)) {
-        setTelemetry(data);
+        // Normalize nested metrics fields to top level
+        const normalized = data.map((f) => ({
+          ...f,
+          cpu: f.cpu ?? f.metrics?.cpu ?? 0,
+          memory: f.memory ?? f.metrics?.memory ?? 0,
+          latency_ms: f.latency_ms ?? f.metrics?.latency_ms ?? 0,
+          packet_loss: f.packet_loss ?? f.metrics?.packet_loss ?? 0,
+          throughput_mbps: f.throughput_mbps ?? f.metrics?.throughput_mbps ?? 0,
+          prb_utilization: f.prb_utilization ?? f.metrics?.prb_utilization ?? 0,
+        }));
+        setTelemetry(normalized);
       }
     } catch (err) {
       console.error('Failed to fetch recent telemetry:', err);
@@ -58,9 +69,10 @@ export function AppProvider({ children }) {
   // Refresh data mode
   const refreshDataMode = async () => {
     try {
-      const mode = await api.get('/api/data/mode');
-      if (mode && mode.mode) {
-        setDataMode(mode.mode);
+      // Unwrapped response has shape {mode, prometheus_reachable, ...}
+      const modeData = await api.get('/api/data/mode');
+      if (modeData && modeData.mode) {
+        setDataMode(modeData.mode);
       }
     } catch (err) {
       console.error('Failed to fetch data mode:', err);
@@ -86,31 +98,35 @@ export function AppProvider({ children }) {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'tick') {
-            // Append frames to telemetry
+            // Normalize frames: backend returns frame.metrics.cpu but charts expect frame.cpu
             if (data.frames && data.frames.length > 0) {
+              const normalized = data.frames.map((f) => ({
+                ...f,
+                cpu: f.cpu ?? f.metrics?.cpu ?? 0,
+                memory: f.memory ?? f.metrics?.memory ?? 0,
+                latency_ms: f.latency_ms ?? f.metrics?.latency_ms ?? 0,
+                packet_loss: f.packet_loss ?? f.metrics?.packet_loss ?? 0,
+                throughput_mbps: f.throughput_mbps ?? f.metrics?.throughput_mbps ?? 0,
+                prb_utilization: f.prb_utilization ?? f.metrics?.prb_utilization ?? 0,
+              }));
               setTelemetry((prev) => {
-                const combined = [...prev, ...data.frames];
-                // Keep last 50 entries
+                const combined = [...prev, ...normalized];
                 return combined.slice(-50);
               });
             }
 
             if (data.alert) {
               setLatestAlert(data.alert);
-              // Prepend alert if not empty
               if (data.alert.fault_probability > 0.4) {
                 setAlerts((prev) => [
-                  {
-                    timestamp: new Date().toISOString(),
-                    ...data.alert
-                  },
-                  ...prev
-                ].slice(0, 100)); // Cap alert history at 100
+                  { timestamp: new Date().toISOString(), ...data.alert },
+                  ...prev,
+                ].slice(0, 100));
               }
             }
 
             if (data.metrics) {
-              setMetrics(prev => ({ ...prev, ...data.metrics }));
+              setMetrics((prev) => ({ ...prev, ...data.metrics }));
             }
           }
         } catch (err) {
@@ -144,8 +160,13 @@ export function AppProvider({ children }) {
 
   const switchDataMode = async (mode) => {
     try {
-      const res = await api.post('/api/data/switch-mode', { mode });
-      if (res && res.status === 'switched') {
+      // Mode must be sent as a query param, not a request body
+      // api.post unwraps {ok,data} -> returns {status, mode, adapter}
+      const res = await api.post(`/api/data/switch-mode?mode=${encodeURIComponent(mode)}`);
+      // After unwrapping, res = {status: 'switched', mode: '...', adapter: '...'}
+      if (res && res.mode) {
+        setDataMode(res.mode);
+      } else {
         setDataMode(mode);
       }
     } catch (err) {

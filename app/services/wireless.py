@@ -28,8 +28,9 @@ class WirelessOptimizerService:
                 exp_scores = [math.exp(score - max(scores)) for score in scores]
                 denom = sum(exp_scores) or 1.0
                 new_row = [value / denom for value in exp_scores]
-                max_delta = max(max_delta, max(abs(a - b) for a, b in zip(allocation[ch], new_row)))
-                allocation[ch] = new_row
+                smoothed_row = [(1.0 - 0.15) * a + 0.15 * b for a, b in zip(allocation[ch], new_row)]
+                max_delta = max(max_delta, max(abs(a - b) for a, b in zip(allocation[ch], smoothed_row)))
+                allocation[ch] = smoothed_row
             energy = -sum(max(row) for row in allocation) + 0.05 * sum(abs(max(allocation[i]) - max(allocation[i - 1])) for i in range(1, channels))
             energy_trace.append(round(energy, 5))
             if max_delta < 1e-4:

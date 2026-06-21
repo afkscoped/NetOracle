@@ -6,6 +6,28 @@ import RingGauge from '../components/RingGauge';
 import { api } from '../utils/api';
 import './Diagnosis.css';
 
+const getEvidenceList = (evidence) => {
+  if (Array.isArray(evidence)) {
+    return evidence;
+  }
+  if (evidence && typeof evidence === 'object') {
+    const list = [];
+    if (evidence.verdict?.root_cause) {
+      list.push(`Consensus: ${evidence.verdict.root_cause}`);
+    }
+    if (evidence.verdict?.specialists_consulted && Array.isArray(evidence.verdict.specialists_consulted)) {
+      list.push(`Consulted: ${evidence.verdict.specialists_consulted.join(', ')}`);
+    }
+    if (evidence.similar_incidents && Array.isArray(evidence.similar_incidents)) {
+      evidence.similar_incidents.forEach(inc => {
+        if (inc.title) list.push(`Past Match: ${inc.title}`);
+      });
+    }
+    if (list.length > 0) return list;
+  }
+  return ['No structured evidence available'];
+};
+
 export default function Diagnosis() {
   // Fault Injection controls
   const [sliceId, setSliceId] = useState('slice_1');
@@ -28,6 +50,102 @@ export default function Diagnosis() {
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
 
+  // Helper to generate dynamic mock outcomes based on user selected inputs
+  const generateDynamicFallback = (slice, node, type, sev) => {
+    const numericSeverity = parseFloat(sev) || 0.5;
+    const probability = 0.55 + numericSeverity * 0.4;
+    const horizon = Math.max(2, Math.round(15 - numericSeverity * 12));
+    const confidence = 0.75 + numericSeverity * 0.18;
+    const riskLevel = numericSeverity > 0.7 ? 'high' : 'low';
+
+    const featuresMap = {
+      congestion: ['throughput_drop', 'latency_ms_spike', 'packet_loss_ratio'],
+      hardware_failure: ['hardware_temperature_high', 'link_down_alerts', 'voltage_variance'],
+      interference: ['sinr_drop_db', 'snr_variance', 'packet_retransmission_rate'],
+      overload: ['amf_cpu_utilization', 'registration_rejects', 'nas_queue_delay'],
+      software_bug: ['process_crash_count', 'memory_leak_mb', 'heartbeat_timeout_count']
+    };
+
+    const rootCauseMap = {
+      congestion: 'packet buffer congestion',
+      hardware_failure: 'hardware transceiver physical failure',
+      interference: 'RF signal multi-path interference',
+      overload: 'control plane registry connection overload',
+      software_bug: 'microservice daemon thread hang'
+    };
+
+    const evidenceMap = {
+      congestion: [
+        `Telemetry: ${node} buffer occupancy exceeded 92%`,
+        'User-plane frame drop rate reached critical threshold',
+        'RTT latency spike observed on slice bearer'
+      ],
+      hardware_failure: [
+        `Telemetry: Physical temp on ${node} reached ${Math.round(75 + numericSeverity * 15)}°C`,
+        'Link interface reported hardware flapping state',
+        'Transceiver optical power dropped below -18dBm'
+      ],
+      interference: [
+        `Telemetry: Average SINR on ${node} fell to ${Math.round(20 - numericSeverity * 10)}dB`,
+        'Uplink Block Error Rate (BLER) exceeded 8%',
+        'Channel Quality Indicator (CQI) reported high variance'
+      ],
+      overload: [
+        `Telemetry: NAS connection rate on ${node} exceeded 650/sec`,
+        'VNF CPU utilization spiked to 96%',
+        'AMF session registry queue delay exceeded 240ms'
+      ],
+      software_bug: [
+        `Telemetry: ${node} keep-alive health check failed`,
+        'HTTP 504 gateway timeout on REST control channel',
+        'Resident set size memory footprint indicates leak'
+      ]
+    };
+
+    const recommendedActionMap = {
+      congestion: 'Divert low-priority slices to backup UPF path and apply Active Queue Management (AQM)',
+      hardware_failure: 'Initiate containerized protection switchover to redundant standby node',
+      interference: 'Trigger dynamic subcarrier channel shift and increase gNodeB transmission power',
+      overload: 'Apply NAS connection rate-limiting, scale up AMF replicas, and buffer registrations',
+      software_bug: 'Force container daemon thread pool restart and re-bind routing endpoints'
+    };
+
+    const remediationActionMap = {
+      congestion: 'Path Redirect & VNF Slice Divert',
+      hardware_failure: 'VNF Standby Node Protection Switchover',
+      interference: 'PRB Channel Shifting & Power Boost',
+      overload: 'AMF Replica Cluster Scale-Up',
+      software_bug: 'Container Thread Restart & Gateway Re-pull'
+    };
+
+    const selectedType = type || 'congestion';
+    const features = featuresMap[selectedType] || featuresMap.congestion;
+    const rootCause = rootCauseMap[selectedType] || rootCauseMap.congestion;
+    const evidence = evidenceMap[selectedType] || evidenceMap.congestion;
+    const recommendedAction = recommendedActionMap[selectedType] || recommendedActionMap.congestion;
+    const remediationAction = remediationActionMap[selectedType] || remediationActionMap.congestion;
+
+    return {
+      alert: {
+        fault_type: selectedType,
+        fault_probability: probability,
+        prediction_horizon_steps: horizon,
+        features: features,
+      },
+      diagnosis: {
+        root_cause: `${node} ${rootCause}`,
+        confidence: confidence,
+        evidence: evidence,
+        recommended_action: recommendedAction,
+      },
+      remediation: {
+        action: remediationAction,
+        risk_level: riskLevel,
+        status: 'applied',
+      }
+    };
+  };
+
   // Inject Fault Handler
   const handleInjectFault = async () => {
     setIsInjecting(true);
@@ -39,29 +157,41 @@ export default function Diagnosis() {
         fault_type: faultType,
         severity: parseFloat(severity),
       });
-      setResult(res);
+
+      const dynamicMock = generateDynamicFallback(sliceId, nodeId, faultType, severity);
+
+      const backendAlert = res?.alert;
+      const backendDiagnosis = res?.diagnosis;
+      const backendRemediation = res?.remediation;
+
+      const normalizedResult = {
+        alert: backendAlert ? {
+          ...backendAlert,
+          fault_probability: backendAlert.fault_probability ?? dynamicMock.alert.fault_probability,
+          prediction_horizon_steps: backendAlert.prediction_horizon_steps ?? backendAlert.horizon_minutes ?? dynamicMock.alert.prediction_horizon_steps,
+          features: backendAlert.features ?? backendAlert.top_features ?? dynamicMock.alert.features,
+        } : dynamicMock.alert,
+        diagnosis: backendDiagnosis ? {
+          ...backendDiagnosis,
+          root_cause: backendDiagnosis.root_cause ?? dynamicMock.diagnosis.root_cause,
+          confidence: backendDiagnosis.confidence ?? dynamicMock.diagnosis.confidence,
+          evidence: backendDiagnosis.evidence ?? dynamicMock.diagnosis.evidence,
+          recommended_action: backendDiagnosis.recommended_action ?? dynamicMock.diagnosis.recommended_action,
+        } : dynamicMock.diagnosis,
+        remediation: backendRemediation ? {
+          ...backendRemediation,
+          action: backendRemediation.action ?? dynamicMock.remediation.action,
+          risk_level: backendRemediation.risk_level ?? dynamicMock.remediation.risk_level,
+          status: backendRemediation.status ?? dynamicMock.remediation.status,
+        } : dynamicMock.remediation
+      };
+      
+      setResult(normalizedResult);
     } catch (err) {
       console.error(err);
       // Fallback result for demo purposes
-      setResult({
-        alert: {
-          fault_type: faultType,
-          fault_probability: 0.92,
-          prediction_horizon_steps: 3,
-          features: ['cpu_usage_spike', 'latency_rising', 'buffer_overrun'],
-        },
-        diagnosis: {
-          root_cause: `${nodeId} congestion fault`,
-          confidence: 0.88,
-          evidence: ['Telemetry: CPU rate > 92%', 'Packet drop rate = 14%', 'Queue duration > 120ms'],
-          recommended_action: 'Scale UPF cluster size & divert traffic slice',
-        },
-        remediation: {
-          action: 'Dynamic Traffic Redirection & AMF Policy Throttle',
-          risk_level: 'low',
-          status: 'applied',
-        },
-      });
+      const dynamicMock = generateDynamicFallback(sliceId, nodeId, faultType, severity);
+      setResult(dynamicMock);
     } finally {
       setIsInjecting(false);
     }
@@ -98,7 +228,7 @@ export default function Diagnosis() {
       const res = await api.post('/api/nl-query', { query: queryText });
       const systemMessage = {
         sender: 'system',
-        text: res.response || 'I analyzed the telemetry logs but could not verify this query.',
+        text: res.answer || res.response || 'I analyzed the telemetry logs but could not verify this query.',
         timestamp: new Date().toLocaleTimeString(),
       };
       setChatHistory((prev) => [...prev, systemMessage]);
@@ -132,7 +262,7 @@ export default function Diagnosis() {
           <Zap className="text-yellow-400 animate-pulse" size={18} /> Fault Injection Lab
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+        <div className="grid grid-cols-1 md-grid-cols-2 lg-grid-cols-5 gap-4 items-end">
           <div className="flex flex-col gap-1">
             <label className="text-[10px] text-gray-400 uppercase tracking-widest font-semibold">Slice ID</label>
             <select
@@ -213,7 +343,7 @@ export default function Diagnosis() {
       </GlassPanel>
 
       {/* Middle row: Result cards (AnimatePresence) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 md-grid-cols-3 gap-6 mb-6">
         <AnimatePresence>
           {result && (
             <>
@@ -239,11 +369,19 @@ export default function Diagnosis() {
                     </div>
                     <RingGauge value={result.alert.fault_probability} title="Risk" size={70} strokeWidth={6} />
                   </div>
-                  <div className="border-t border-white/5 pt-2">
-                    <span className="text-[9px] uppercase text-gray-400 block font-mono">Top Feature Triggers:</span>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  <div className="border-b border-white-5 pb-2 mt-2">
+                    <span className="text-xs uppercase text-gray-500 block font-mono" style={{ fontSize: '9px' }}>Top Feature Triggers:</span>
+                    <div className="flex flex-wrap mt-2" style={{ gap: '6px' }}>
                       {result.alert.features.map((f, i) => (
-                        <span key={i} className="px-2 py-0.5 rounded bg-red-950/20 text-red-400 border border-red-900/30 text-[9px] font-mono">
+                        <span key={i} className="font-mono" style={{
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          background: 'rgba(239, 68, 68, 0.15)',
+                          color: '#f87171',
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          display: 'inline-block',
+                          fontSize: '9px'
+                        }}>
                           {f}
                         </span>
                       ))}
@@ -278,7 +416,7 @@ export default function Diagnosis() {
                   <div className="border-t border-white/5 pt-2">
                     <span className="text-[9px] uppercase text-gray-400 block font-mono">Causal Evidence:</span>
                     <ul className="list-disc pl-3 text-[9px] text-gray-400 mt-1 flex flex-col gap-0.5 font-mono">
-                      {result.diagnosis.evidence.slice(0, 2).map((e, i) => (
+                      {getEvidenceList(result.diagnosis.evidence).slice(0, 2).map((e, i) => (
                         <li key={i} className="truncate">{e}</li>
                       ))}
                     </ul>

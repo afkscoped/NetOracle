@@ -504,7 +504,9 @@ def run_demo(request: DemoRunRequest) -> dict:
 
 
 @app.get("/api/causal-graph")
-def causal_graph() -> dict:
+def causal_graph(slice: str | None = None) -> dict:
+    if slice and slice in {"slice_1", "slice_2", "slice_3"}:
+        return {"ok": True, "data": intelligence_service.discover_slice_dag(slice)}
     return {"ok": True, "data": intelligence_service.federated_dag()}
 
 

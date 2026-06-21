@@ -7,12 +7,16 @@ import './Topology.css';
 
 // Colors for each node type
 const NODE_COLORS = {
-  gNB: '#00e5ff',
-  AMF: '#a855f7',
-  SMF: '#f59e0b',
-  UPF: '#10b981',
-  PCF: '#ef4444',
-  UDM: '#6366f1',
+  gNB: '#00e5ff',      // Cyan
+  AMF: '#a855f7',      // Purple
+  SMF: '#f59e0b',      // Amber
+  UPF: '#10b981',      // Green
+  PCF: '#ef4444',      // Red
+  UDM: '#6366f1',      // Indigo
+  Slice: '#ec4899',    // Pink
+  Router: '#3b82f6',   // Blue
+  Service: '#eab308',  // Yellow
+  Policy: '#14b8a6',   // Teal
 };
 
 export default function Topology() {
@@ -47,23 +51,37 @@ export default function Topology() {
     try {
       const data = await api.get('/api/topology');
       if (data && data.nodes) {
-        // Initialize position if not present
+        // Initialize position if not present and normalize node structure
         const initializedNodes = data.nodes.map((node, i) => {
           const angle = (i / data.nodes.length) * 2 * Math.PI;
+          const mappedId = node.node_id || node.id;
+          const mappedType = node.node_type || node.type || 'Unknown';
+          const mappedRisk = node.properties?.fault_risk ?? node.properties?.risk_score ?? node.risk ?? 0.0;
           return {
             ...node,
-            x: 250 + 120 * Math.cos(angle),
-            y: 180 + 100 * Math.sin(angle),
+            id: mappedId,
+            type: mappedType,
+            risk: mappedRisk,
+            x: 400 + 180 * Math.cos(angle),
+            y: 250 + 150 * Math.sin(angle),
             vx: 0,
             vy: 0,
             fx: null,
             fy: null,
           };
         });
+
+        // Normalize edge structure to use source and target
+        const mappedEdges = (data.edges || []).map((edge) => ({
+          ...edge,
+          source: edge.source_id || edge.source,
+          target: edge.target_id || edge.target,
+        }));
+
         setNodes(initializedNodes);
-        setEdges(data.edges || []);
+        setEdges(mappedEdges);
         nodesRef.current = initializedNodes;
-        edgesRef.current = data.edges || [];
+        edgesRef.current = mappedEdges;
       } else {
         // Fallback topology
         const fallbackNodes = [
@@ -78,8 +96,8 @@ export default function Topology() {
           const angle = (i / 7) * 2 * Math.PI;
           return {
             ...node,
-            x: 250 + 120 * Math.cos(angle),
-            y: 180 + 100 * Math.sin(angle),
+            x: 400 + 180 * Math.cos(angle),
+            y: 250 + 150 * Math.sin(angle),
             vx: 0,
             vy: 0,
             fx: null,
@@ -113,8 +131,8 @@ export default function Topology() {
   // Force Directed Graph Simulation Loop
   useEffect(() => {
     let animId;
-    const center = { x: 250, y: 180 };
-    const kRepulsion = 400; // Repulsion constant
+    const center = { x: 400, y: 250 };
+    const kRepulsion = 800; // Repulsion constant
     const kAttraction = 0.03; // Spring constant
     const damping = 0.85;
 
@@ -159,8 +177,8 @@ export default function Topology() {
           const dy = nodeB.y - nodeA.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
 
-          // Ideal spring length is 80
-          const force = (dist - 80) * kAttraction;
+          // Ideal spring length is 120
+          const force = (dist - 120) * kAttraction;
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
 
@@ -198,8 +216,8 @@ export default function Topology() {
         node.y += node.vy;
 
         // Constraint within SVG viewport bounds
-        node.x = Math.max(20, Math.min(480, node.x));
-        node.y = Math.max(20, Math.min(340, node.y));
+        node.x = Math.max(30, Math.min(770, node.x));
+        node.y = Math.max(30, Math.min(470, node.y));
       });
 
       setNodes([...currentNodes]);
@@ -215,8 +233,10 @@ export default function Topology() {
   const handleMouseDown = (node, e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     draggingNodeRef.current = node.id;
-    node.fx = e.clientX - rect.left;
-    node.fy = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    node.fx = (x / rect.width) * 800;
+    node.fy = (y / rect.height) * 500;
   };
 
   const handleMouseMove = (e) => {
@@ -224,8 +244,10 @@ export default function Topology() {
     const rect = canvasRef.current.getBoundingClientRect();
     const node = nodesRef.current.find((n) => n.id === draggingNodeRef.current);
     if (node) {
-      node.fx = e.clientX - rect.left;
-      node.fy = e.clientY - rect.top;
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      node.fx = (x / rect.width) * 800;
+      node.fy = (y / rect.height) * 500;
     }
   };
 
@@ -350,7 +372,7 @@ export default function Topology() {
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
-            <svg width="100%" height="100%" viewBox="0 0 500 360" className="topo-canvas">
+            <svg width="100%" height="100%" viewBox="0 0 800 500" className="topo-canvas">
               {/* Grid Background */}
               <defs>
                 <pattern id="topoGrid" width="20" height="20" patternUnits="userSpaceOnUse">

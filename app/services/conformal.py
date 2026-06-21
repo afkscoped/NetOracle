@@ -240,7 +240,9 @@ class ConformalPredictor:
         self._aci_updates += 1
         self._aci_coverage_sum += float(covered)
 
+        from datetime import datetime
         update_record = {
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
             "t": self._aci_updates,
             "prediction": round(prediction, 4),
             "true_label": float(true_label),

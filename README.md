@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # 🔮 NetOracle
 
@@ -250,27 +250,66 @@ Interactive API docs: **http://127.0.0.1:8000/docs**
 
 ## Open5GS / UERANSIM Integration
 
-NetOracle can ingest live 5G Core telemetry from Open5GS running in WSL2.
+NetOracle can ingest live, real-time 5G Core telemetry from Open5GS and UERANSIM running inside WSL2 (Ubuntu 22.04). Follow this verified startup guide:
 
+### 1. Start Open5GS Core Services (inside WSL2)
+Start the MongoDB subscriber store, Prometheus scraper, and the Open5GS control-plane and user-plane network functions:
 ```bash
-# 1. Inside WSL2 (Ubuntu 22.04)
-bash scripts/install_open5gs_wsl.sh   # Install Open5GS, Prometheus, UERANSIM
-bash scripts/start_open5gs.sh         # Start the full 5G stack
+# Start MongoDB database
+sudo systemctl start mongod
+
+# Start Prometheus metrics engine
+sudo systemctl start prometheus
+
+# Start Open5GS network functions
+sudo systemctl restart open5gs-nrfd open5gs-amfd open5gs-smfd open5gs-upfd open5gs-pcfd
 ```
 
+### 2. Register the 5G Subscriber (inside WSL2)
+Run the subscriber registration script to register the simulated SIM card in the core's subscriber database:
+```bash
+mongosh open5gs "/mnt/c/Users/Rishab Nayak/Desktop/Om/RVCE/EL/IV Sem/NetOracle/scripts/register_subscriber.js"
+```
+
+### 3. Configure WSL Kernel Routing & NAT NAT Masquerading (inside WSL2)
+Allow the virtual subscriber namespace to forward packets through your computer's virtual network interface to reach the internet:
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -s 10.45.0.0/16 ! -o ogstun -j MASQUERADE
+sudo iptables -I FORWARD 1 -i ogstun -j ACCEPT
+sudo iptables -I FORWARD 1 -o ogstun -j ACCEPT
+```
+
+### 4. Start the UERANSIM gNodeB & UE Simulators (inside WSL2)
+Open separate terminal tabs and launch the 5G Base Station (gNodeB) and 5G Phone Simulator (UE):
+```bash
+# Tab 1: Start gNodeB base station
+sudo /home/rishab_nayak/UERANSIM/build/nr-gnb -c /home/rishab_nayak/UERANSIM/config/open5gs-gnb.yaml
+
+# Tab 2: Start UE phone simulator
+sudo /home/rishab_nayak/UERANSIM/build/nr-ue -c /home/rishab_nayak/UERANSIM/config/open5gs-ue.yaml
+```
+*Verify that the UE outputs: `Connection setup for PDU session[1] is successful, TUN interface[uesimtun0, 10.45.0.3] is up`.*
+
+### 5. Launch the Traffic Generator (inside WSL2)
+Generate network traffic (internet downloads, pings, multi-user load) to feed metrics to Prometheus:
+```bash
+sudo ip netns exec ueransim-999700000000001-internet-psi1 python3 "/mnt/c/Users/Rishab Nayak/Desktop/Om/RVCE/EL/IV Sem/NetOracle/scripts/generate_realistic_traffic.py" --interface uesimtun0 --duration 1800
+```
+
+### 6. Connect NetOracle (on Windows)
+Configure the `.env` file on Windows to connect to your local WSL environment:
 ```env
-# 2. In .env on Windows
 DATA_SOURCE_MODE=open5gs
-OPEN5GS_PROMETHEUS_URL=http://<wsl2-ip>:9090
-OPEN5GS_MONGO_URI=mongodb://<wsl2-ip>:27017
+OPEN5GS_PROMETHEUS_URL=http://localhost:9090
+OPEN5GS_MONGO_URI=mongodb://localhost:27017
 ```
-
+Launch the server using `.\run.ps1` or run the verification pre-flight checklist:
 ```powershell
-# 3. Optional: create wsl.local hosts entry (run as Administrator)
-.\scripts\configure_wsl_bridge.ps1
+.venv\Scripts\python.exe scripts/verify_open5gs_integration.py
 ```
 
-If Open5GS is unreachable, NetOracle automatically falls back to `open5gs_simulated` frames.
+If Open5GS is unreachable or not running, NetOracle automatically falls back to diurnal simulated telemetry frames.
 
 ---
 

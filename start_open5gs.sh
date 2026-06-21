@@ -85,7 +85,8 @@ echo "[5/6] Starting UERANSIM gNB..."
 if command -v nr-gnb &> /dev/null; then
     pkill -f "nr-gnb" 2>/dev/null || true
     sleep 1
-    mkdir -p /var/log/ueransim
+    sudo mkdir -p /var/log/ueransim
+    sudo chown -R $(whoami):$(whoami) /var/log/ueransim
     nohup nr-gnb -c /etc/ueransim/open5gs-gnb.yaml > /var/log/ueransim/gnb.log 2>&1 &
     GNB_PID=$!
     sleep 5

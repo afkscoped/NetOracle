@@ -153,10 +153,13 @@ class TestPerformanceBenchmarks:
         assert elapsed < 5000
 
     def test_benchmark_suite_runs(self, client):
-        """Verify the full evaluation suite can execute without 500 errors."""
+        """Verify the benchmark endpoint queues a background job without 500 errors."""
         r = client.post("/api/benchmarks/run")
         assert r.status_code == 200
         data = r.json().get("data", {})
-        assert "metrics" in data
+        # New async contract: returns job_id immediately
+        assert "job_id" in data, f"Expected job_id in response, got: {data}"
         assert "status" in data
+        assert data["status"] == "queued"
+        assert "poll" in data
 

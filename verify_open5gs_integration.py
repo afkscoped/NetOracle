@@ -16,8 +16,13 @@ from pathlib import Path
  
 import requests
  
+from app.settings import get_settings
+
+settings = get_settings()
 BASE_URL = "http://127.0.0.1:8000"
-PROM_URL = "http://localhost:9090"   # Change to WSL2 IP if running on Windows
+PROM_URL = settings.open5gs_prometheus_url
+MONGO_URI = settings.open5gs_mongo_uri
+
  
 PASS = "[OK]"
 FAIL = "[FAIL]"
@@ -200,7 +205,7 @@ try:
  
     adapter = Open5GSAdapter(
         prometheus_url=PROM_URL,
-        mongo_uri="mongodb://localhost:27017",
+        mongo_uri=MONGO_URI,
     )
     tick_start = time.time()
     frames = adapter.get_tick()

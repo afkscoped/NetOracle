@@ -52,6 +52,33 @@ STATIC_DIR = BASE_DIR / "static"
 _jobs: dict[str, dict[str, Any]] = {}
 
 
+def _do_export_retrain(limit: int = 5000, epochs: int = 5) -> dict:
+    """
+    Stub for the auto-retrain pipeline.
+    Exports the latest `limit` telemetry frames to a CSV in exports/
+    and logs the retrain trigger.  Full GPU-accelerated retrain runs
+    via colab_train.py / training/train_ctgnn_colab.py.
+    """
+    import csv
+    import os
+
+    os.makedirs("exports", exist_ok=True)
+    rows = db.fetch_all(
+        f"SELECT * FROM telemetry ORDER BY id DESC LIMIT {int(limit)}"
+    )
+    export_path = f"exports/auto_retrain_export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    if rows:
+        with open(export_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+    logger.info(
+        f"[AutoRetrain] Exported {len(rows)} rows → {export_path}  "
+        f"(epochs={epochs}, full retrain: run colab_train.py)"
+    )
+    return {"exported": len(rows), "path": export_path, "epochs_requested": epochs}
+
+
 def _new_job(label: str) -> str:
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {
@@ -130,8 +157,9 @@ async def auto_tick() -> None:
                 current_count = res.get("count", 0) if res else 0
                 if previous_count > 0 and (current_count // 500) > (previous_count // 500):
                     logger.info(f"[AutoRetrain] Telemetry count crossed 500-frame threshold ({previous_count} -> {current_count}). Auto-triggering retrain...")
-                    job_id = _new_job(f"auto_export_retrain(limit=5000)")
-                    asyncio.create_task(_run_job(job_id, _do_export_retrain, {"limit": 5000, "epochs": 5}))
+                    job_id = _new_job("auto_export_retrain(limit=5000)")
+                    # Pass limit/epochs as keyword args — NOT as a dict positional arg
+                    asyncio.create_task(_run_job(job_id, _do_export_retrain, limit=5000, epochs=5))
                 previous_count = current_count
             except Exception as e:
                 logger.error(f"[AutoRetrain] Error checking trigger: {e}")
@@ -181,8 +209,22 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await task
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="NetOracle", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# ─── CORS ────────────────────────────────────────────────────────────────────
+# Must be added BEFORE any route handler.
+# Allows the React/Vite dev server and the embedded dashboard to call the API
+# from any origin without 405 preflight errors.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,  # must be False when allow_origins=["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Instrumentator().instrument(app).expose(app)
 
@@ -325,9 +367,15 @@ async def switch_data_mode(mode: str):
     Switch data source mode at runtime without restarting.
     Valid modes: simulation | csv_stream | prometheus | open5gs | upload
     """
+    valid_modes = {"simulation", "csv_stream", "prometheus", "open5gs", "upload"}
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Invalid mode '{mode}'. Valid modes: {sorted(valid_modes)}")
     import os
     from app.services.data_sources import reset_adapter
     os.environ["DATA_SOURCE_MODE"] = mode
+    # Clear the @lru_cache so get_settings() returns a fresh Settings object
+    # reflecting the new DATA_SOURCE_MODE env var on the next call.
+    get_settings.cache_clear()
     reset_adapter()
     new_adapter = get_adapter()
     return {"ok": True, "data": {

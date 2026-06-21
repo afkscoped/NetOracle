@@ -1,19 +1,57 @@
+# ── Secrets & local config ──────────────────────────────────────────────────
 .env
+
+# ── Python runtime ───────────────────────────────────────────────────────────
 .venv/
 __pycache__/
-*.pyc
-.data/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Test & coverage artefacts ────────────────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.hypothesis/
+reports/
+
+# ── Data & databases ─────────────────────────────────────────────────────────
 data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/exported_telemetry.csv
 *.sqlite
 *.sqlite3
-.DS_Store
-reports/
+
+# ── Model training outputs (large binary files) ──────────────────────────────
+artifacts/conformal_calibration.json
+artifacts/ctgnn_t4_best.pt
+artifacts/models/
+
+# ── Generated / exported runtime files ───────────────────────────────────────
+exports/
 demo_output.json
-extract_html.py
+docs_extract.txt
 extracted_docs.txt
 
-artifacts/*.log
-exports/
-data/exported_telemetry.csv
+# ── Node.js (frontend build) ─────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── External source bundles (checked out separately) ─────────────────────────
 open5gs-2.8.0/
 
+# ── OS noise ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Screenshots and SQLite journals ──────────────────────────────────────────
+ss/
+data/*.db-shm
+data/*.db-wal

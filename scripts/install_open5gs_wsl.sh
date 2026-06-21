@@ -42,9 +42,8 @@ sudo add-apt-repository ppa:open5gs/latest -y
 sudo apt-get update
 sudo apt-get install -y open5gs
 ls /usr/bin/open5gs-* >/dev/null
-
 echo "[5/10] Installing Open5GS WebUI..."
-curl -fsSL https://open5gs.org/open5gs/assets/webui/install | sudo -E bash -
+(cd /tmp && curl -fsSL https://open5gs.org/open5gs/assets/webui/install | sudo -E bash -)
 
 patch_metrics_block() {
   local file="$1"

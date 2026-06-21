@@ -248,7 +248,7 @@ Interactive API docs: **http://127.0.0.1:8000/docs**
 
 ---
 
-## Recent Integration, Fixes & Refinements (v2.8)
+## Recent Integration, Fixes & Refinements
 
 Here is a summary of the senior-level network engineering and software architecture updates implemented to make NetOracle fully production-ready and cross-platform stable:
 
@@ -297,7 +297,7 @@ sudo systemctl restart open5gs-nrfd open5gs-amfd open5gs-smfd open5gs-upfd open5
 ### 2. Register the 5G Subscriber (inside WSL2)
 Run the subscriber registration script to register the simulated SIM card in the core's subscriber database:
 ```bash
-mongosh open5gs "/mnt/c/Users/Rishab Nayak/Desktop/Om/RVCE/EL/IV Sem/NetOracle/scripts/register_subscriber.js"
+mongosh open5gs "./scripts/register_subscriber.js"
 ```
 
 ### 3. Configure WSL Kernel Routing & NAT NAT Masquerading (inside WSL2)
@@ -312,18 +312,18 @@ sudo iptables -I FORWARD 1 -o ogstun -j ACCEPT
 ### 4. Start the UERANSIM gNodeB & UE Simulators (inside WSL2)
 Open separate terminal tabs and launch the 5G Base Station (gNodeB) and 5G Phone Simulator (UE):
 ```bash
-# Tab 1: Start gNodeB base station
-sudo /home/rishab_nayak/UERANSIM/build/nr-gnb -c /home/rishab_nayak/UERANSIM/config/open5gs-gnb.yaml
+# Tab 1: Start gNodeB base station (run from UERANSIM directory)
+sudo ./build/nr-gnb -c config/open5gs-gnb.yaml
 
-# Tab 2: Start UE phone simulator
-sudo /home/rishab_nayak/UERANSIM/build/nr-ue -c /home/rishab_nayak/UERANSIM/config/open5gs-ue.yaml
+# Tab 2: Start UE phone simulator (run from UERANSIM directory)
+sudo ./build/nr-ue -c config/open5gs-ue.yaml
 ```
 *Verify that the UE outputs: `Connection setup for PDU session[1] is successful, TUN interface[uesimtun0, 10.45.0.3] is up`.*
 
 ### 5. Launch the Traffic Generator (inside WSL2)
 Generate network traffic (internet downloads, pings, multi-user load) to feed metrics to Prometheus:
 ```bash
-sudo ip netns exec ueransim-999700000000001-internet-psi1 python3 "/mnt/c/Users/Rishab Nayak/Desktop/Om/RVCE/EL/IV Sem/NetOracle/scripts/generate_realistic_traffic.py" --interface uesimtun0 --duration 1800
+sudo ip netns exec ueransim-999700000000001-internet-psi1 python3 "./scripts/generate_realistic_traffic.py" --interface uesimtun0 --duration 1800
 ```
 
 ### 6. Connect NetOracle (on Windows)

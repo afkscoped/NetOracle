@@ -75,7 +75,7 @@ function AppContent() {
                 <h1 className="text-md font-bold tracking-widest text-white uppercase" style={{ fontFamily: 'Orbitron, sans-serif' }}>
                   NetOracle
                 </h1>
-                <span className="text-[9px] text-cyan-400 font-mono tracking-wider">5G AIOPS NOC v2.8</span>
+                <span className="text-[9px] text-cyan-400 font-mono tracking-wider">5G AIOPS NOC</span>
               </div>
             </div>
 

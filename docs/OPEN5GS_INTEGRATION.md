@@ -201,7 +201,7 @@ make
 # Or use MongoDB directly:
 mongo open5gs --eval '
 db.subscribers.insertOne({
-  "imsi": "901700000000001",
+  "imsi": "999700000000001",
   "security": {
     "k": "465B5CE8B199B49FAA5F0A2EE238A6BC",
     "opc": "E8ED289DEBA952E4283B54E88E6183CA"

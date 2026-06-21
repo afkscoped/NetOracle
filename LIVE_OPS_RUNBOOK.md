@@ -13,7 +13,7 @@ Follow the **Open5GS Setup Guide** (provided separately) to:
 - ✅ Open5GS installed via PPA or built from source
 - ✅ Prometheus + node_exporter installed
 - ✅ UERANSIM cloned, compiled, configs set
-- ✅ Test subscriber added via WebUI (IMSI 001010000000001, K, OPc set)
+- ✅ Test subscriber added via WebUI/start script (IMSI 999700000000001, K, OPc set)
 - ✅ Open5GS NF configs have `metrics.server.port` set: AMF=9095, SMF=9096, UPF=9097, PCF=9098
 - ✅ (Optional but recommended) `.wslconfig` with `networkingMode=mirrored` for Windows 11 22H2+
 

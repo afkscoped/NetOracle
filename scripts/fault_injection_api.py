@@ -40,17 +40,30 @@ except ImportError:
     print("  pip install fastapi uvicorn")
     sys.exit(1)
 
+def _log_handlers() -> list[logging.Handler]:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    log_path = os.getenv("NETORACLE_FAULT_API_LOG", "/tmp/fault_injection_api.log")
+    try:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(path))
+    except OSError as exc:
+        print(f"WARNING: fault API file logging disabled for {log_path}: {exc}", file=sys.stderr)
+    return handlers
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [FaultInjectionAPI] %(levelname)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("/tmp/fault_injection_api.log"),
-    ],
+    handlers=_log_handlers(),
 )
 logger = logging.getLogger(__name__)
 
 # ── Injection state tracking ──────────────────────────────────────────────────
+DEFAULT_TEST_IMSI = os.getenv("OPEN5GS_TEST_IMSI", "999700000000001")
+GNB_CONFIG = os.getenv("UERANSIM_GNB_CONFIG", "/etc/ueransim/open5gs-gnb.yaml")
+UE_CONFIG = os.getenv("UERANSIM_UE_CONFIG", "/etc/ueransim/open5gs-ue.yaml")
+
 _active_injections: dict[str, dict[str, Any]] = {}
 
 # ── Helper: run shell command ─────────────────────────────────────────────────
@@ -208,7 +221,7 @@ def inject_gnb_drop():
 
 # ── Fault: Subscriber Auth Failure ───────────────────────────────────────────
 @app.post("/inject/subscriber_auth_failure")
-def inject_subscriber_auth_failure(imsi: str = "001010000000001"):
+def inject_subscriber_auth_failure(imsi: str = DEFAULT_TEST_IMSI):
     """
     Corrupt the subscriber's K (authentication key) in MongoDB so the UE
     fails the 5G-AKA authentication challenge.
@@ -216,7 +229,7 @@ def inject_subscriber_auth_failure(imsi: str = "001010000000001"):
     Detectable via: amf_registration_success_total stops incrementing, success ratio drops.
     
     Args:
-        imsi: IMSI of the subscriber to corrupt (default: 001010000000001)
+        imsi: IMSI of the subscriber to corrupt (default: 999700000000001)
     """
     try:
         import pymongo  # type: ignore[import]
@@ -304,15 +317,15 @@ def inject_restore_all():
 
     # Restart gNB
     if "gnb_drop" in _active_injections:
-        gnb_config = "/root/UERANSIM/config/open5gs-gnb.yaml"
-        gnb_bin = "/root/UERANSIM/build/nr-gnb"
-        attempt("restart_gnb", lambda: _run(f"sudo {gnb_bin} -c {gnb_config} &"))
+        attempt("ensure_log_dir", lambda: _run("sudo mkdir -p /var/log/ueransim"))
+        attempt("restart_gnb", lambda: _run(f"nohup nr-gnb -c {GNB_CONFIG} >/var/log/ueransim/gnb.log 2>&1 &"))
+        attempt("restart_ue", lambda: _run(f"nohup nr-ue -c {UE_CONFIG} >/var/log/ueransim/ue.log 2>&1 &"))
         _active_injections.pop("gnb_drop", None)
 
     # Restore subscriber K
     if "subscriber_auth_failure" in _active_injections:
         info = _active_injections["subscriber_auth_failure"]
-        imsi = info.get("imsi", "001010000000001")
+        imsi = info.get("imsi", DEFAULT_TEST_IMSI)
         orig_k = info.get("original_k")
         if orig_k:
             try:

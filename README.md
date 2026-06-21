@@ -264,10 +264,10 @@ bash scripts/install_open5gs_wsl.sh
 The installer covers system packages, MongoDB, Open5GS PPA install, Open5GS WebUI, Prometheus/node-exporter, NF metrics config, UERANSIM build, UERANSIM gNB/UE YAML, and service enablement. It configures Open5GS NF Prometheus metrics on:
 
 ```text
-AMF 9090
-SMF 9091
-UPF 9092
-PCF 9093
+AMF 9095
+SMF 9096
+UPF 9097
+PCF 9098
 Prometheus server 9090
 MongoDB 27017
 Open5GS WebUI 3000

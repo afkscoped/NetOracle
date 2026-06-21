@@ -241,8 +241,17 @@ class IntelligenceService:
         return {
             "model_active": arch,
             "model_auc": self._model_meta.get("auc", 0.0) if self._model_loaded else 0.0,
+            "model_artifact": {
+                "loaded": self._model_loaded,
+                "path": self._model_meta.get("artifact_path"),
+                "size_bytes": self._model_meta.get("artifact_size_bytes"),
+                "architecture": arch,
+                "window": self._model_meta.get("window", self._window_size),
+                "horizon": self._model_meta.get("horizon"),
+            },
             "conformal_calibrated": self._conformal.is_calibrated,
             "conformal_q_hat": self._conformal.q_hat if self._conformal.is_calibrated else None,
+            "notears_source": "precomputed_artifact" if self._notears._precomputed else "computed_from_telemetry_fallback",
             "auc_proxy": self._model_meta.get("auc", 0.87) if self._model_loaded else 0.87,
             "lead_time_minutes": 10 if alerts else 0,
             "alerts": len(alerts),

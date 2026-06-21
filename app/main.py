@@ -111,11 +111,30 @@ async def auto_tick() -> None:
     settings = get_settings()
     logger.info(f"[AutoTick] Starting with adapter: {adapter.__class__.__name__}")
 
+    # Initialize telemetry counter for auto-retrain trigger
+    try:
+        res = db.fetch_one("SELECT COUNT(*) as count FROM telemetry")
+        previous_count = res.get("count", 0) if res else 0
+    except Exception:
+        previous_count = 0
+
     while True:
         await asyncio.sleep(max(1, settings.open5gs_poll_interval_s))
         try:
             # Get frames from the configured source
             frames = telemetry_service.generate_tick()
+
+            # Auto-retrain trigger: when count crosses a 500-frame threshold
+            try:
+                res = db.fetch_one("SELECT COUNT(*) as count FROM telemetry")
+                current_count = res.get("count", 0) if res else 0
+                if previous_count > 0 and (current_count // 500) > (previous_count // 500):
+                    logger.info(f"[AutoRetrain] Telemetry count crossed 500-frame threshold ({previous_count} -> {current_count}). Auto-triggering retrain...")
+                    job_id = _new_job(f"auto_export_retrain(limit=5000)")
+                    asyncio.create_task(_run_job(job_id, _do_export_retrain, {"limit": 5000, "epochs": 5}))
+                previous_count = current_count
+            except Exception as e:
+                logger.error(f"[AutoRetrain] Error checking trigger: {e}")
 
             # Run intelligence prediction on latest frames
             alert = intelligence_service.predict_latest()

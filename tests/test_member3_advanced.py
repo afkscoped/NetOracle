@@ -3,7 +3,7 @@ import math
 import time
 import json
 from unittest.mock import patch, MagicMock, call
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings, HealthCheck, strategies as st
 
 # ══════════════════════════════════════════════════════════════════════════
 # GRAPHRAG TESTS
@@ -93,7 +93,7 @@ class TestPathScoring:
         assert graph_service._score_path([]) == 0.0
 
     @given(st.lists(st.text(min_size=1, max_size=20), min_size=1, max_size=10))
-    @settings(max_examples=50)
+    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
     def test_score_always_non_negative(self, relations):
         path = [{"relation": r} for r in relations]
         assert graph_service._score_path(path) >= 0.0

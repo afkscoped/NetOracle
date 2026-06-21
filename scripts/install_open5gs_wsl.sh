@@ -46,24 +46,82 @@ ls /usr/bin/open5gs-* >/dev/null
 echo "[5/10] Installing Open5GS WebUI..."
 curl -fsSL https://open5gs.org/open5gs/assets/webui/install | sudo -E bash -
 
-append_metrics_block() {
+patch_metrics_block() {
   local file="$1"
-  local port="$2"
-  if ! sudo grep -q "^[[:space:]]*port:[[:space:]]*$port" "$file"; then
-    sudo tee -a "$file" >/dev/null <<EOF
+  local nf="$2"
+  local port="$3"
+  sudo python3 - "$file" "$nf" "$port" <<'PY'
+from pathlib import Path
+import re
+import sys
 
-metrics:
-  addr: 0.0.0.0
-  port: $port
-EOF
-  fi
+path = Path(sys.argv[1])
+nf = sys.argv[2]
+port = sys.argv[3]
+lines = path.read_text(encoding="utf-8").splitlines()
+
+# Remove legacy top-level blocks written by older NetOracle scripts.
+cleaned = []
+i = 0
+while i < len(lines):
+    indent = len(lines[i]) - len(lines[i].lstrip(" "))
+    if indent == 0 and lines[i].strip() == "metrics:":
+        j = i + 1
+        block = []
+        while j < len(lines) and (not lines[j].strip() or lines[j].startswith((" ", "\t"))):
+            block.append(lines[j])
+            j += 1
+        text = "\n".join(block)
+        if "addr:" in text and "port:" in text and "server:" not in text:
+            i = j
+            continue
+    cleaned.append(lines[i])
+    i += 1
+lines = cleaned
+
+start = None
+for idx, line in enumerate(lines):
+    if re.match(rf"^{re.escape(nf)}:\s*$", line):
+        start = idx
+        break
+if start is None:
+    raise SystemExit(f"{path}: top-level '{nf}:' block not found")
+
+end = len(lines)
+for idx in range(start + 1, len(lines)):
+    if lines[idx] and not lines[idx].startswith((" ", "\t")) and re.match(r"^[A-Za-z0-9_-]+:", lines[idx]):
+        end = idx
+        break
+
+inside = []
+i = start + 1
+while i < end:
+    if re.match(r"^  metrics:\s*$", lines[i]):
+        j = i + 1
+        while j < end and (not lines[j].strip() or lines[j].startswith("    ")):
+            j += 1
+        i = j
+        continue
+    inside.append(lines[i])
+    i += 1
+
+metrics_block = [
+    "  metrics:",
+    "    server:",
+    "      - address: 0.0.0.0",
+    f"        port: {port}",
+]
+patched = lines[: start + 1] + metrics_block + inside + lines[end:]
+path.write_text("\n".join(patched) + "\n", encoding="utf-8")
+print(f"patched {path}: {nf}.metrics.server port {port}")
+PY
 }
 
 echo "[6/10] Enabling Open5GS Prometheus exporters..."
-append_metrics_block /etc/open5gs/amf.yaml 9095
-append_metrics_block /etc/open5gs/smf.yaml 9096
-append_metrics_block /etc/open5gs/upf.yaml 9097
-append_metrics_block /etc/open5gs/pcf.yaml 9098
+patch_metrics_block /etc/open5gs/amf.yaml amf 9095
+patch_metrics_block /etc/open5gs/smf.yaml smf 9096
+patch_metrics_block /etc/open5gs/upf.yaml upf 9097
+patch_metrics_block /etc/open5gs/pcf.yaml pcf 9098
 
 echo "[7/10] Configuring Prometheus scrape jobs..."
 sudo tee /etc/prometheus/prometheus.yml >/dev/null <<'EOF'

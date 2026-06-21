@@ -248,6 +248,35 @@ Interactive API docs: **http://127.0.0.1:8000/docs**
 
 ---
 
+## Recent Integration, Fixes & Refinements (v2.8)
+
+Here is a summary of the senior-level network engineering and software architecture updates implemented to make NetOracle fully production-ready and cross-platform stable:
+
+### 🔭 NOC Live Metrics & Inference Stability
+* **Exposed Live Inference Risk:** Resolved the issue where the NOC dashboard KPI was stuck at `0%` risk. Tracked the latest computed GNN fault probability in memory (`self.last_probability`) during tick execution and dynamically exposed it inside `/api/metrics` and the WebSocket tick feed.
+* **NOC Chart Sizing:** Resized area and line charts from hardcoded CSS constraints to dynamic container widths (`w-full`), ensuring they stretch and adapt across different viewport resolutions.
+* **CMDP Button Layout:** Added Flexbox constraints (`flex-shrink: 0`, `white-space: nowrap`) to active remediation control buttons on the Wireless RL page to prevent text wrapping or cropping on narrow viewports.
+
+### 📡 Real-Time 5G Telemetry & Adapter Mappings
+* **Host Interface Proxying:** Configured the Prometheus adapter to read packet rates directly from the host virtual device interface (`ogstun`) since the containerized interface (`uesimtun0`) is isolated within WSL's network namespace and invisible to the host node-exporter.
+* **UPF Throughput Fallback:** Integrated a fallback mapping to scrape bytes from `ogstun` when native UPF NF metrics return zero, keeping throughput curves responsive.
+* **Rolling Cache Refinements:** Redesigned counter delta timing to track timestamps per-key, preventing rate values from shrinking toward zero over time.
+* **Verified Schema Queries:** Replaced assumed core metric names with verified Prometheus schemas (`ran_ue`, `pfcp_sessions_active`, `fivegs_ep_n3_gtp_indatapktn3upf`) in pre-flight checks.
+
+### 🌐 UI Navigation & Topology Sizing
+* **3D Digital Twin Navigation:** Integrated a direct **3D Digital Twin** link to the navigation bar using the `Globe` icon. Clicking it opens `/twin` in a new tab.
+* **Topology Normalization:** Added mapping support to resolve schema differences between backend SQLite graph entities (`source_id`/`target_id`) and frontend properties (`source`/`target`), restoring lost network node connections.
+* **ViewBox & Coordinate Dragging:** Expanded the SVG canvas dimensions from `500x360` to `800x500` to prevent label overlaps, and scaled mouse drag delta inputs dynamically to SVG viewBox ratios to align coordinates correctly on zoom.
+
+### 🧪 Advanced Physics & Algorithm Tuning
+* **Continuous Lyapunov Decay:** Modified the Hopfield Network optimizer in `wireless.py` to use a continuous-time damped state transition update ($\eta = 0.15$), allowing the allocator to converge smoothly over 45 steps. This creates a realistic exponential Lyapunov minimization curve instead of snapping in a single step.
+* **Audit Trail Payload Formatting:** Added detailed serializers for proactive forecasting, RAG indexing, cypher queries, and conformal predictions inside the Audit Trail page.
+
+### 💻 Windows Console UTF-8 Reconfiguration
+* **Pre-Flight Checks Unicode Support:** Added standard output and standard error reconfigurations to enforce `utf-8` on Windows terminals, eliminating shell crashes (`UnicodeEncodeError` under `cp1252`) when printing diagnostic checks, tables, and emojis.
+
+---
+
 ## Open5GS / UERANSIM Integration
 
 NetOracle can ingest live, real-time 5G Core telemetry from Open5GS and UERANSIM running inside WSL2 (Ubuntu 22.04). Follow this verified startup guide:

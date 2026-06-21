@@ -1,0 +1,50 @@
+/* Diagnosis & Remediation Page Styles */
+.diagnosis-page {
+  animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.inject-panel {
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.diagnosis-result-card {
+  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.diagnosis-result-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+}
+
+.chat-container {
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.chat-container div::-webkit-scrollbar {
+  width: 4px;
+}
+
+.chat-container div::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-container div::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+}
+
+.chat-container div::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 255, 0.2);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

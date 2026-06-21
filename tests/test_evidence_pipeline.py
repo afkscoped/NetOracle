@@ -46,21 +46,21 @@ def test_metric_registry_marks_present_and_missing(monkeypatch):
         adapter.prom,
         "label_values",
         lambda label_name="__name__": (
-            ["node_cpu_seconds_total", "node_memory_MemTotal_bytes", "upf_rx_bytes_total"],
+            ["node_cpu_seconds_total", "node_memory_MemTotal_bytes", "fivegs_ep_n3_gtp_indatapktn3upf"],
             {"ok": True, "endpoint": "/api/v1/label/__name__/values"},
         ),
     )
 
     class Response:
         status_code = 200
-        text = "# HELP dummy\nupf_rx_bytes_total 1\n"
+        text = "# HELP dummy\nfivegs_ep_n3_gtp_indatapktn3upf 1\n"
 
     monkeypatch.setattr("app.services.open5gs_adapter.requests.get", lambda *args, **kwargs: Response())
     registry = adapter.discover_metric_registry(save=False)
 
     by_name = {item["metric_name"]: item for item in registry["expected_metrics"]}
-    assert by_name["upf_rx_bytes_total"]["status"] == "verified_present"
-    assert by_name["amf_session_count"]["status"] == "assumed_missing"
+    assert by_name["fivegs_ep_n3_gtp_indatapktn3upf"]["status"] == "verified_present"
+    assert by_name["pfcp_sessions_active"]["status"] == "assumed_missing"
     assert registry["nf_exporters"]["upf"]["reachable"] is True
 
 

@@ -191,7 +191,11 @@ Instrumentator().instrument(app).expose(app)
 
 @app.get("/")
 def index() -> FileResponse:
+    react_index = STATIC_DIR / "react-dist" / "index.html"
+    if react_index.exists():
+        return FileResponse(react_index)
     return FileResponse(STATIC_DIR / "index.html")
+
 
 
 @app.get("/twin")
@@ -908,6 +912,40 @@ async def run_benchmarks(scenarios: int = 60) -> dict:
     job_id = _new_job(f"benchmark_run(scenarios={scenarios})")
     asyncio.create_task(_run_job(job_id, benchmark_service.run, scenarios))
     return {"ok": True, "data": {"job_id": job_id, "status": "queued", "poll": f"/api/jobs/{job_id}"}}
+
+
+@app.post("/api/benchmarks/live")
+def run_live_benchmarks() -> dict:
+    return {"ok": True, "data": benchmark_service.run_live()}
+
+
+@app.get("/api/evidence/latest")
+def get_latest_evidence(limit: int = 10) -> dict:
+    rows = db.latest_telemetry(5000)
+    by_source = {}
+    for r in rows:
+        src = str(r.get("source", "unknown"))
+        by_source[src] = by_source.get(src, 0) + 1
+    
+    latest_frames = db.latest_telemetry(limit)
+    
+    return {
+        "ok": True,
+        "data": {
+            "source_distribution": by_source,
+            "claim_boundaries": {
+                "open5gs_live": "Values verified against WSL2 Prometheus ports",
+                "simulation": "Synthetic metrics from scenario file",
+                "open5gs_simulated": "Open5GS stack data under simulation"
+            },
+            "latest_frames": latest_frames,
+            "artifacts": {
+                "open5gs_metric_registry": "artifacts/open5gs_metric_registry.json" if Path("artifacts/open5gs_metric_registry.json").exists() else None,
+                "benchmarks_live_vs_simulated": "reports/benchmarks_live_vs_simulated.json" if Path("reports/benchmarks_live_vs_simulated.json").exists() else None
+            }
+        }
+    }
+
 
 
 

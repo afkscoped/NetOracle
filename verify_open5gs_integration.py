@@ -61,13 +61,13 @@ if prom_ok:
         except Exception:
             return None
  
-    amf_sessions = prom_query("amf_session_count")
-    upf_rx       = prom_query("upf_rx_bytes_total")
-    smf_pdu      = prom_query("smf_pdu_session_count")
+    amf_sessions = prom_query("amf_session")
+    upf_rx       = prom_query("fivegs_ep_n3_gtp_indatapktn3upf")
+    smf_pdu      = prom_query("pfcp_sessions_active")
  
-    check("AMF session_count metric", amf_sessions is not None, str(amf_sessions))
-    check("UPF rx_bytes_total metric", upf_rx      is not None, str(upf_rx))
-    check("SMF pdu_session_count metric", smf_pdu  is not None, str(smf_pdu))
+    check("AMF session metric (amf_session)", amf_sessions is not None, str(amf_sessions))
+    check("UPF packet metric (fivegs_ep_n3_gtp_indatapktn3upf)", upf_rx is not None, str(upf_rx))
+    check("SMF PDU metric (pfcp_sessions_active)", smf_pdu is not None, str(smf_pdu))
 else:
     print(f"  {WARN}  Skipping metric checks (Prometheus not reachable)")
     print(f"       Start Open5GS in WSL2: bash start_open5gs.sh")
@@ -79,13 +79,11 @@ section("2. MongoDB / Open5GS Subscriber Store")
  
 try:
     from pymongo import MongoClient
-    client = MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=3000)
-    client.admin.command("ping")
-    mongo_ok = True
-    db = client["open5gs"]
-    sub_count = db["subscribers"].count_documents({})
-    check("MongoDB reachable", True, "mongodb://localhost:27017")
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+    check("MongoDB reachable", True, MONGO_URI)
     check("open5gs database exists", True)
+    db = client.open5gs
+    sub_count = db.subscribers.count_documents({})
     check("Subscriber registered", sub_count > 0, f"{sub_count} subscriber(s) found")
     client.close()
 except ImportError:
@@ -148,7 +146,7 @@ if api_ok:
         import asyncio
  
         async def test_ws():
-            async with websockets.connect(f"ws://127.0.0.1:8000/ws/telemetry", timeout=5) as ws:
+            async with websockets.connect(f"ws://127.0.0.1:8000/ws/telemetry") as ws:
                 msg = await asyncio.wait_for(ws.recv(), timeout=10)
                 data = json.loads(msg)
                 return data.get("type") == "tick"

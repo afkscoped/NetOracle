@@ -15,3 +15,5 @@ extracted_docs.txt
 artifacts/*.log
 exports/
 data/exported_telemetry.csv
+open5gs-2.8.0/
+

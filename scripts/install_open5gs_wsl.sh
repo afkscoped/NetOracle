@@ -21,7 +21,7 @@ sudo apt-get install -y \
   libgcrypt-dev libssl-dev \
   libidn11-dev libmongoc-dev \
   libbson-dev liblz4-dev \
-  libnghttp2-dev libbcrypt-dev \
+  libnghttp2-dev \
   iproute2 iputils-ping net-tools \
   prometheus prometheus-node-exporter
 

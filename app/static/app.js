@@ -296,6 +296,27 @@ function renderExecutiveProof(data) {
     <div class="deep-dive"><b>Boss talk track</b><ul>${talk}</ul></div>`;
 }
 
+function renderEvidenceBundle(data) {
+  if (!data) return '<div class="empty-state">No evidence bundle available.</div>';
+  const dist = Object.entries(data.source_distribution || {})
+    .map(([source, count]) => metricPill(human(source), count, source.includes('live') ? 'good' : source.includes('partial') ? 'warn' : ''))
+    .join('');
+  const latest = (data.latest_frames || []).slice(-4).map(frame => {
+    const ev = frame.evidence || {};
+    const queries = (ev.queries || []).slice(0, 3).map(q => `${q.name}: ${q.value ?? 'missing'}`).join(', ');
+    return `<div class="evidence-row"><span>${human(frame.source || 'unknown')}</span><div><b>${frame.node_id} ${frame.node_type}</b><p>${queries || human(frame.source_detail?.fallback_reason || 'no query evidence')}</p></div></div>`;
+  }).join('');
+  const artifacts = Object.entries(data.artifacts || {})
+    .map(([name, path]) => `<li><code>${human(name)}</code>: ${path}</li>`).join('');
+  const boundaries = Object.entries(data.claim_boundaries || {})
+    .map(([name, meaning]) => `<li><b>${human(name)}</b>: ${meaning}</li>`).join('');
+  return `
+    <div class="metric-strip">${dist || metricPill('Sources', 'none', 'warn')}</div>
+    <div class="evidence-stack">${latest || '<div class="muted-note">No frame-level evidence yet.</div>'}</div>
+    <div class="deep-dive"><b>Local artifacts</b><ul>${artifacts}</ul></div>
+    <div class="deep-dive"><b>Claim boundaries</b><ul>${boundaries}</ul></div>`;
+}
+
 function renderTemplates(data) {
   return `
     <div class="summary-card"><h3>Telemetry CSV Header</h3><code>${data.telemetry_csv_header}</code></div>
@@ -793,6 +814,13 @@ async function refreshProactive() {
   return state.proactive;
 }
 
+async function refreshEvidence() {
+  html('evidencePanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const res = await api('/api/evidence/latest?limit=12');
+  html('evidencePanel', renderEvidenceBundle(res.data));
+  return res.data;
+}
+
 async function refreshAutopilot() {
   html('autopilotPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
   const res = await api('/api/proactive/autopilot');
@@ -808,7 +836,7 @@ async function refreshExecutiveProof() {
 }
 
 async function refreshAll() {
-  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshProactive(), refreshAutopilot(), refreshMetrics(), explainCurrentTab(false)]);
+  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshEvidence(), refreshProactive(), refreshAutopilot(), refreshMetrics(), explainCurrentTab(false)]);
 }
 
 function handleTick(payload) {
@@ -880,6 +908,7 @@ function setupTabs() {
       if (tab === 'datasources') refreshDataMode().catch(toast);
       if (tab === 'topology') refreshTopology().catch(toast);
       if (tab === 'intelligence') refreshDAG().catch(toast);
+      if (tab === 'intelligence') refreshEvidence().catch(toast);
       if (tab === 'executive') refreshExecutiveProof().catch(toast);
       explainCurrentTab(false).catch(toast);
     });
@@ -906,6 +935,8 @@ function setupButtons() {
   $('auditFilter')?.addEventListener('change', () => refreshAudit().catch(toast));
   $('severity')?.addEventListener('input', e => text('sevVal', e.target.value));
   $('btnBenchmark')?.addEventListener('click', runBenchmark);
+  $('btnLiveBenchmark')?.addEventListener('click', runLiveBenchmark);
+  $('btnEvidence')?.addEventListener('click', () => refreshEvidence().catch(e => toast(e.message, 'error')));
   $('btnHopfield')?.addEventListener('click', runHopfield);
 
   $('btnPolicy')?.addEventListener('click', showPolicy);
@@ -994,18 +1025,66 @@ async function askDiagnosisQuestion() {
   html('diagNlAnswer', renderNlAnswer(result.data));
 }
 
+async function pollJob(jobId, onUpdate, intervalMs = 2000, maxWaitMs = 120000) {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = async () => {
+      try {
+        const r = await fetch(`/api/jobs/${jobId}`);
+        const j = await r.json();
+        const job = j.data || {};
+        onUpdate(job);
+        if (job.status === 'done') return resolve(job.result);
+        if (job.status === 'error') return reject(new Error(job.error || 'Job failed'));
+        if (Date.now() - start > maxWaitMs) return reject(new Error('Job timed out'));
+        setTimeout(check, intervalMs);
+      } catch (e) { reject(e); }
+    };
+    setTimeout(check, intervalMs);
+  });
+}
+
 async function runBenchmark() {
-  text('benchOutput', 'Running benchmark...');
   const n = Number($('benchScenarios')?.value || 60);
-  const result = await api(`/api/benchmarks/run?scenarios=${n}`, { method: 'POST' });
-  html('benchOutput', renderObjectSummary(result.data, 'Benchmark Summary'));
-  const metrics = result.data?.metrics || {};
+  html('benchOutput', `<div class="xai-loader"><span></span><span></span><span></span></div><p style="text-align:center;color:var(--muted);margin-top:8px">Queuing ${n}-scenario benchmark… this runs in the background.</p>`);
+  try {
+    const r = await api(`/api/benchmarks/run?scenarios=${n}`, { method: 'POST' });
+    const jobId = r.data?.job_id;
+    if (!jobId) throw new Error('No job_id returned');
+    toast(`⚙ Benchmark queued (job ${jobId}) — polling for results…`, 'info');
+    const result = await pollJob(jobId,
+      (job) => text('benchOutput', `⏳ Benchmark ${job.status}… (job ${jobId})`),
+      2500, 180000
+    );
+    html('benchOutput', renderObjectSummary(result, 'Benchmark Results'));
+    const metrics = result?.metrics || result || {};
+    renderBarChart('benchChart', [
+      { label: 'CTGNN ROC AUC', value: metrics.roc_auc || 0, display: pct(metrics.roc_auc), color: 'var(--cyan)' },
+      { label: 'Localisation accuracy', value: metrics.localisation_accuracy || 0, display: pct(metrics.localisation_accuracy), color: 'var(--green)' },
+      { label: 'RCA accuracy', value: metrics.rca_accuracy || 0, display: pct(metrics.rca_accuracy), color: 'var(--purple)' },
+      { label: 'False positive control', value: 1 - (metrics.false_positive_rate || 0), display: pct(1 - (metrics.false_positive_rate || 0)), color: 'var(--amber)' },
+    ]);
+    toast('✅ Benchmark complete', 'success');
+  } catch (e) {
+    html('benchOutput', `<div class="empty-state">Benchmark error: ${e.message}</div>`);
+    toast(e.message, 'error');
+  }
+}
+
+
+async function runLiveBenchmark() {
+  text('benchOutput', 'Computing live evidence benchmark from local artifacts...');
+  const result = await api('/api/benchmarks/live', { method: 'POST' });
+  const data = result.data || {};
+  html('benchOutput', renderObjectSummary(data, 'Live Evidence Benchmark'));
+  const scenario = data.fault_scenarios || {};
+  const model = data.model_comparison || {};
   renderBarChart('benchChart', [
-    { label: 'CTGNN ROC AUC', value: metrics.roc_auc || 0, display: pct(metrics.roc_auc), color: 'var(--cyan)' },
-    { label: 'Localisation accuracy', value: metrics.localisation_accuracy || 0, display: pct(metrics.localisation_accuracy), color: 'var(--green)' },
-    { label: 'RCA accuracy', value: metrics.rca_accuracy || 0, display: pct(metrics.rca_accuracy), color: 'var(--purple)' },
-    { label: 'False positive control', value: 1 - (metrics.false_positive_rate || 0), display: pct(1 - (metrics.false_positive_rate || 0)), color: 'var(--amber)' },
+    { label: 'Live detection rate', value: scenario.detection_rate || 0, display: pct(scenario.detection_rate), color: 'var(--green)' },
+    { label: 'Heuristic live AUC', value: model.heuristic_live_auc || 0, display: model.heuristic_live_auc == null ? 'needs labels' : pct(model.heuristic_live_auc), color: 'var(--amber)' },
+    { label: 'Source live share', value: (data.inputs?.live_rows || 0) / Math.max((data.inputs?.telemetry_rows || 1), 1), display: `${data.inputs?.live_rows || 0}/${data.inputs?.telemetry_rows || 0}`, color: 'var(--cyan)' },
   ]);
+  await refreshEvidence().catch(() => {});
 }
 
 async function runHopfield() {
@@ -1013,9 +1092,35 @@ async function runHopfield() {
   const users = Number($('hopUsers')?.value || 8);
   const channels = Number($('hopCh')?.value || 16);
   const result = await api(`/api/wireless/hopfield?users=${users}&channels=${channels}`, { method: 'POST' });
-  html('hopOutput', renderObjectSummary(result.data, 'Hopfield Allocation') + `<div class="math-panel"><b>Lyapunov energy</b><code>E=-1/2ΣᵢΣⱼwᵢⱼsᵢsⱼ+Σᵢθᵢsᵢ</code><p>The allocator converges by reducing network energy while avoiding channel conflicts.</p></div>`);
-  const assignments = result.data?.assignments || [];
+  const data = result.data || {};
+  html('hopOutput', renderObjectSummary(data, 'Hopfield Allocation') + `<div class="math-panel"><b>Lyapunov energy</b><code>E=-1/2ΣᵢΣⱼ wᵢⱼsᵢsⱼ+Σᵢθᵢsᵢ</code><p>The allocator converges by reducing network energy while avoiding channel conflicts.</p></div>`);
+  const assignments = data.assignments || [];
   html('hopfieldViz', assignments.map(a => `<span class="hop-cell active" style="opacity:${Math.max(0.25, a.probability || 0.5)}" title="channel ${a.channel} -> user ${a.user}, p=${a.probability}"></span>`).join(''));
+  // Render energy convergence trace if available
+  const trace = data.energy_trace || [];
+  if (trace.length > 1) {
+    const canvas = $('hopEnergyChart');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const minE = Math.min(...trace), maxE = Math.max(...trace);
+      const rangeE = maxE - minE || 1;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = 'var(--cyan, #00f5ff)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      trace.forEach((e, i) => {
+        const x = (i / (trace.length - 1)) * w;
+        const y = h - ((e - minE) / rangeE) * (h - 8) - 4;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      // Label
+      ctx.fillStyle = 'rgba(0,245,255,0.7)';
+      ctx.font = '10px monospace';
+      ctx.fillText(`E: ${minE.toFixed(2)} → ${trace[trace.length-1].toFixed(2)}`, 4, 12);
+    }
+  }
 }
 
 function renderAdaptiveWirelessPlan(data) {
@@ -1130,13 +1235,27 @@ function downloadSyntheticData() {
 }
 
 async function trainGeneratedData() {
-  html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div><p style="text-align:center;color:var(--muted);margin-top:8px">Queuing retrain job…</p>');
   const payload = { limit: 5000, cpu: true };
   if (state.lastSynthetic?.output) payload.data = state.lastSynthetic.output;
-  const result = await api('/api/training/export-retrain', { method: 'POST', body: JSON.stringify(payload) });
-  html('syntheticOutput', renderObjectSummary(result.data?.export, 'Training Export') + renderObjectSummary(result.data?.training, 'Training Job'));
-  await Promise.allSettled([refreshMetrics(), refreshAudit(), explainCurrentTab(false)]);
+  try {
+    const result = await api('/api/training/export-retrain', { method: 'POST', body: JSON.stringify(payload) });
+    const jobId = result.data?.job_id;
+    if (!jobId) throw new Error('No job_id returned from retrain');
+    toast(`⚙ Retrain queued (job ${jobId}) — polling…`, 'info');
+    const data = await pollJob(jobId,
+      (job) => text('syntheticOutput', `⏳ Retrain ${job.status}… (job ${jobId})`),
+      3000, 300000
+    );
+    html('syntheticOutput', renderObjectSummary(data?.export, 'Training Export') + renderObjectSummary(data?.training, 'Training Job'));
+    toast('✅ Retrain complete', 'success');
+    await Promise.allSettled([refreshMetrics(), refreshAudit(), explainCurrentTab(false)]);
+  } catch (e) {
+    html('syntheticOutput', `<div class="empty-state">Retrain error: ${e.message}</div>`);
+    toast(e.message, 'error');
+  }
 }
+
 
 async function analyseRealtime() {
   html('realtimePanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
@@ -1246,6 +1365,19 @@ async function init() {
   if (!localStorage.getItem('netor_v2_welcomed') && $('onboardModal')) $('onboardModal').style.display = 'flex';
   await refreshAll();
   connectWebSocket();
+  // Check readiness — show model status in topbar
+  try {
+    const ready = await fetch('/ready').then(r => r.json());
+    const modelPill = $('dataModePill');
+    if (modelPill) {
+      const modelLabel = ready.model === 'CTGNN' ? '🧠 CTGNN' : '⚡ Heuristic';
+      const color = ready.model === 'CTGNN' ? 'var(--cyan)' : 'var(--amber)';
+      modelPill.textContent = modelLabel;
+      modelPill.style.display = '';
+      modelPill.style.color = color;
+      modelPill.title = `Model: ${ready.model} | DB: ${ready.checks?.db ? 'OK' : 'ERR'} | Conformal: ${ready.checks?.conformal_calibrated ? 'calibrated' : 'uncalibrated'}`;
+    }
+  } catch (e) { /* silent — /ready is optional */ }
 }
 
 init().catch(err => {

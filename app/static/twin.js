@@ -10,6 +10,10 @@ const timeline = document.getElementById('timeline');
 const hud = document.querySelector('.hud');
 const threshold = document.getElementById('threshold');
 const scrubber = document.getElementById('scrubber');
+const ingestBadge = document.getElementById('ingest-badge');
+const connStatus = document.getElementById('conn-status');
+const nodeCount = document.getElementById('node-count');
+const ingestLog = document.getElementById('ingest-log');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -317,10 +321,75 @@ animate();
 function connectTwinWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/telemetry`);
+  
+  ws.onopen = () => {
+    if (connStatus) {
+      connStatus.textContent = 'LIVE';
+      connStatus.style.color = '#4ade80';
+    }
+  };
+
   ws.onmessage = (event) => {
     const payload = JSON.parse(event.data);
     if (payload.type !== 'tick' || !sceneData?.nodes || pendingLiveUpdate) return;
     pendingLiveUpdate = true;
+
+    // Update Live Ingestion HUD
+    if (connStatus) {
+      connStatus.textContent = 'LIVE';
+      connStatus.style.color = '#4ade80';
+    }
+    if (ingestBadge && payload.source) {
+      ingestBadge.textContent = payload.source.toUpperCase();
+    }
+    if (nodeCount && payload.frames) {
+      nodeCount.textContent = payload.frames.length;
+    }
+
+    if (ingestLog && payload.frames && payload.frames.length > 0) {
+      payload.frames.forEach(frame => {
+        const row = document.createElement('div');
+        row.className = 'log-row';
+        const timeStr = new Date(frame.timestamp).toLocaleTimeString();
+        row.innerHTML = `<span class="log-time">[${timeStr}]</span> <span style="color: #fb7185;">INGEST</span> <span class="log-node">${frame.node_id}</span> cpu=${frame.cpu}% lat=${frame.latency_ms}ms loss=${(frame.packet_loss*100).toFixed(1)}%`;
+        ingestLog.appendChild(row);
+      });
+      while (ingestLog.children.length > 40) {
+        ingestLog.removeChild(ingestLog.firstChild);
+      }
+      ingestLog.scrollTop = ingestLog.scrollHeight;
+    }
+
+    // Check if the set of nodes changed
+    const currentNodes = new Set((sceneData.nodes || []).map(n => n.id));
+    const incomingNodes = new Set((payload.frames || []).map(f => f.node_id).filter(Boolean));
+    
+    let topologyChanged = false;
+    if (incomingNodes.size > 0 && currentNodes.size !== incomingNodes.size) {
+      topologyChanged = true;
+    } else {
+      for (const id of incomingNodes) {
+        if (!currentNodes.has(id)) {
+          topologyChanged = true;
+          break;
+        }
+      }
+    }
+
+    if (topologyChanged) {
+      console.log("[Twin] Active nodes changed in stream. Reloading scene...");
+      api('/api/visualization/scene')
+        .then(scenePayload => {
+          drawScene(scenePayload.data);
+          pendingLiveUpdate = false;
+        })
+        .catch(err => {
+          console.error(err);
+          pendingLiveUpdate = false;
+        });
+      return;
+    }
+
     const riskByNode = new Map();
     for (const frame of payload.frames || []) {
       riskByNode.set(frame.node_id, frame.fault_label ? 0.9 : 0);
@@ -333,7 +402,14 @@ function connectTwinWebSocket() {
       pendingLiveUpdate = false;
     });
   };
-  ws.onclose = () => setTimeout(connectTwinWebSocket, 3000);
+
+  ws.onclose = () => {
+    if (connStatus) {
+      connStatus.textContent = 'OFFLINE';
+      connStatus.style.color = '#ef4444';
+    }
+    setTimeout(connectTwinWebSocket, 3000);
+  };
 }
 
 connectTwinWebSocket();

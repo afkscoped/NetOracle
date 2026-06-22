@@ -24,6 +24,7 @@ from app.services.ctgnn_model import (
     load_ctgnn_model,
     load_norm_stats,
     predict_with_model,
+    trace_with_model,
 )
 from app.services.notears import NOTEARSDiscovery
 
@@ -46,6 +47,7 @@ class IntelligenceService:
         # Initialize NOTEARS discovery
         self._notears = NOTEARSDiscovery()
         self.last_probability = 0.0
+        self.last_prediction_trace: dict[str, Any] | None = None
 
         logger.info(
             f"IntelligenceService initialized: "
@@ -102,6 +104,46 @@ class IntelligenceService:
 
         return round(score, 3), top, fault_type
 
+    def _heuristic_risk_explanation(self, metrics: dict[str, float]) -> dict[str, Any]:
+        normalized = {
+            "cpu": float(metrics.get("cpu", 0) or 0) / 100,
+            "memory": float(metrics.get("memory", 0) or 0) / 100,
+            "latency_ms": min(1.0, float(metrics.get("latency_ms", 0) or 0) / 120),
+            "packet_loss": min(1.0, float(metrics.get("packet_loss", 0) or 0) / 0.16),
+            "throughput_mbps": max(0.0, 1 - float(metrics.get("throughput_mbps", 1000) or 0) / 1050),
+            "prb_utilization": float(metrics.get("prb_utilization", 0) or 0),
+        }
+        weights = {
+            "cpu": 0.16, "memory": 0.10, "latency_ms": 0.25,
+            "packet_loss": 0.24, "throughput_mbps": 0.10, "prb_utilization": 0.15,
+        }
+        contributions = {key: normalized[key] * weights[key] for key in weights}
+        weighted_score = sum(contributions.values())
+        logit = 8 * (weighted_score - 0.48)
+        probability = 1 / (1 + math.exp(-logit))
+        top = sorted(normalized, key=normalized.get, reverse=True)[:3]
+        if "packet_loss" in top and normalized["packet_loss"] > 0.55:
+            fault_type = "packet_loss"
+        elif "cpu" in top and normalized["cpu"] > 0.82:
+            fault_type = "cpu_overload"
+        elif "prb_utilization" in top and normalized["prb_utilization"] > 0.78:
+            fault_type = "congestion"
+        elif "memory" in top and normalized["memory"] > 0.78:
+            fault_type = "vnf_degradation"
+        else:
+            fault_type = "latency_spike"
+        return {
+            "method": "heuristic_weight_proxy",
+            "normalized": {key: round(value, 6) for key, value in normalized.items()},
+            "weights": weights,
+            "contributions": {key: round(value, 6) for key, value in contributions.items()},
+            "raw_weighted_score": round(weighted_score, 6),
+            "logit": round(logit, 6),
+            "probability": round(probability, 4),
+            "top_features": top,
+            "fault_type": fault_type,
+        }
+
     def _classify_fault_type(self, metrics: dict[str, float]) -> str:
         """Classify fault type from metric values."""
         _, _, fault_type = self._heuristic_risk_score(metrics)
@@ -128,7 +170,10 @@ class IntelligenceService:
 
         # Time the forward pass for benchmarking
         t0 = time.perf_counter()
-        probability = predict_with_model(
+        trace = trace_with_model(
+            self._model, window_data, self._norm_stats, self._window_size
+        )
+        probability = trace["probability"] if trace else predict_with_model(
             self._model, window_data, self._norm_stats, self._window_size
         )
         inference_ms = (time.perf_counter() - t0) * 1000
@@ -144,6 +189,7 @@ class IntelligenceService:
             "inference_ms": round(inference_ms, 2),
             "model": "CausalAttentionGRU",
             "model_auc": self._model_meta.get("auc", 0.0),
+            "trace": trace,
         }
 
     # ─── Main Prediction Entry Point ──────────────────────────────────
@@ -196,16 +242,48 @@ class IntelligenceService:
         )
 
         self.last_probability = float(probability)
+        attribution = self._heuristic_risk_explanation(latest_row["metrics"])
 
         # Run Adaptive Conformal Inference (ACI) update using the latest ground truth label
         true_label = int(latest_row.get("fault_label") or 0)
-        self._conformal.update(probability, true_label)
+        aci_update = self._conformal.update(probability, true_label)
+
+        self.last_prediction_trace = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "slice_id": slice_id,
+            "node_id": node_id,
+            "node_type": latest_row.get("node_type"),
+            "source": latest_row.get("source", "unknown"),
+            "source_detail": latest_row.get("source_detail"),
+            "evidence": latest_row.get("evidence"),
+            "latest_metrics": latest_row.get("metrics", {}),
+            "window_size": self._window_size,
+            "norm_stats": self._norm_stats,
+            "model": prediction_detail.get("model", "unknown"),
+            "model_loaded": self._model_loaded,
+            "model_trace": prediction_detail.get("trace"),
+            "attribution": attribution,
+            "conformal": {
+                "fault_probability": prediction_detail.get("fault_probability"),
+                "prob_lower": prediction_detail.get("prob_lower"),
+                "prob_upper": prediction_detail.get("prob_upper"),
+                "q_hat": prediction_detail.get("q_hat"),
+                "calibrated": prediction_detail.get("calibrated"),
+                "coverage_guarantee": prediction_detail.get("coverage_guarantee"),
+                "interval_width": prediction_detail.get("interval_width"),
+            },
+            "aci_update": aci_update,
+            "top_features": top_features,
+            "fault_type": fault_type,
+            "inference_ms": prediction_detail.get("inference_ms", 0.0),
+        }
 
         if probability < 0.50:
             return None
 
         # Get causal edges
         dag = self.federated_dag()
+        self.last_prediction_trace["causal_edges"] = dag.get("global_edges", [])
 
         # Build alert
         alert_id = "alert_" + hashlib.sha1(

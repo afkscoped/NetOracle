@@ -351,7 +351,10 @@ function connectTwinWebSocket() {
         const row = document.createElement('div');
         row.className = 'log-row';
         const timeStr = new Date(frame.timestamp).toLocaleTimeString();
-        row.innerHTML = `<span class="log-time">[${timeStr}]</span> <span style="color: #fb7185;">INGEST</span> <span class="log-node">${frame.node_id}</span> cpu=${frame.cpu}% lat=${frame.latency_ms}ms loss=${(frame.packet_loss*100).toFixed(1)}%`;
+        const cpuVal = frame.cpu ?? frame.metrics?.cpu ?? 0;
+        const latVal = frame.latency_ms ?? frame.metrics?.latency_ms ?? 0;
+        const lossVal = frame.packet_loss ?? frame.metrics?.packet_loss ?? 0;
+        row.innerHTML = `<span class="log-time">[${timeStr}]</span> <span style="color: #fb7185;">INGEST</span> <span class="log-node">${frame.node_id}</span> cpu=${cpuVal}% lat=${latVal}ms loss=${(lossVal*100).toFixed(1)}%`;
         ingestLog.appendChild(row);
       });
       while (ingestLog.children.length > 40) {

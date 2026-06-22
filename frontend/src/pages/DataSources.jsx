@@ -162,12 +162,7 @@ export default function DataSources() {
                     key={mode}
                     onClick={() => handleModeSwitch(mode)}
                     disabled={isSwitching}
-                    style={isActive ? { pointerEvents: 'none' } : {}}
-                    className={`py-3 rounded-xl text-xs font-bold uppercase transition-all tracking-wider flex flex-col items-center justify-center gap-2 ${
-                      isActive
-                        ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.4)]'
-                        : 'bg-slate-900 border border-white/5 hover:bg-slate-800 text-gray-400'
-                    }`}
+                    className={`mode-btn ${isActive ? 'active' : ''}`}
                   >
                     {mode === 'open5gs' ? <Radio size={16} /> : mode === 'simulation' ? <Beaker size={16} /> : <FileUp size={16} />}
                     {mode.replace('_', ' ')}
@@ -314,7 +309,7 @@ export default function DataSources() {
               <button
                 onClick={handleGenerateSynthetic}
                 disabled={isGenerating}
-                className="py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                className="btn btn-primary w-full justify-center"
               >
                 {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <Settings size={12} />}
                 Generate Scenario
@@ -336,24 +331,24 @@ export default function DataSources() {
             <p className="text-xs text-gray-500 mb-6">Bulk upload CSV/JSON network telemetry arrays for model retraining and validation</p>
 
             <form onSubmit={handleUpload} className="flex flex-col gap-4">
-              <div className="flex flex-col items-center justify-center border border-dashed border-cyan-800/30 rounded-xl p-8 bg-slate-950/20 hover:bg-slate-950/40 transition-all cursor-pointer relative">
+              <div className="dropzone-area">
                 <input
                   type="file"
                   accept=".csv,.json"
                   onChange={handleFileChange}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  className="dropzone-input"
                 />
-                <FileUp size={32} className="text-cyan-400/80 mb-2 animate-bounce" />
-                <span className="text-xs font-bold text-gray-300">
+                <FileUp size={32} className="dropzone-icon" />
+                <span className="dropzone-text">
                   {selectedFile ? selectedFile.name : 'Select telemetry CSV/JSON file'}
                 </span>
-                <span className="text-[9px] text-gray-500 mt-1 uppercase">Max size: 10MB</span>
+                <span className="dropzone-subtext">Max size: 10MB</span>
               </div>
 
               <button
                 type="submit"
                 disabled={isUploading || !selectedFile}
-                className="py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                className="btn btn-primary w-full justify-center"
               >
                 {isUploading ? <Loader2 size={12} className="animate-spin" /> : <FileUp size={12} />}
                 Ingest Telemetry

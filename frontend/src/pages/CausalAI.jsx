@@ -221,7 +221,7 @@ export default function CausalAI() {
             <button
               onClick={fetchGraph}
               disabled={isLoadingGraph}
-              className="p-1.5 rounded-lg border border-cyan-800/30 text-cyan-400 bg-cyan-950/25 hover:bg-cyan-900/40 transition-all"
+              className="btn btn-sm"
             >
               <RefreshCw size={14} className={isLoadingGraph ? 'animate-spin' : ''} />
             </button>
@@ -320,7 +320,7 @@ export default function CausalAI() {
               <button
                 onClick={runBenchmark}
                 disabled={isBenchmarking}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/40 hover:bg-cyan-900/40 text-cyan-400 rounded-lg text-xs font-semibold border border-cyan-800/30 transition-all disabled:opacity-50"
+                className="btn btn-primary btn-sm"
                 style={{ whiteSpace: 'nowrap' }}
               >
                 {isBenchmarking ? <Loader2 size={12} className="animate-spin" /> : <BarChart3 size={12} />}
@@ -359,7 +359,7 @@ export default function CausalAI() {
           <button
             onClick={fetchConformal}
             disabled={isLoadingConformal}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-cyan-800/30 text-cyan-400 rounded-lg text-xs font-semibold hover:bg-slate-800 transition-all"
+            className="btn btn-sm"
             style={{ whiteSpace: 'nowrap' }}
           >
             <RefreshCw size={12} className={isLoadingConformal ? 'animate-spin' : ''} />

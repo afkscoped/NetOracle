@@ -662,7 +662,9 @@ class GraphService:
                     scored.append((score, node))
             result = [node for _, node in sorted(scored, key=lambda item: item[0], reverse=True)[:5]] or nodes[:5]
         answer = ""
-        if "last fault" in q or "caused" in q or "root cause" in q:
+        if q.strip("!? .") in {"hi", "hello", "hey", "hola", "greetings", "good morning", "good afternoon", "good evening"}:
+            answer = "Hello! I am the NetOracle Diagnostics agent. Ask me about root causes, performance impacts, or remediations."
+        elif "last fault" in q or "caused" in q or "root cause" in q:
             diagnosis = next((item for item in result if item.get("event_type") == "fault_diagnosed"), None)
             prediction = next((item for item in result if item.get("event_type") == "fault_predicted"), None)
             payload = (diagnosis or prediction or {}).get("payload", {})
@@ -679,6 +681,25 @@ class GraphService:
                 )
             else:
                 answer = "No fault diagnosis has been recorded yet. Run a closed-loop demo or inject a fault first."
+
+        if not answer:
+            # Query the database for any active telemetry warnings
+            telemetry = db.latest_telemetry(10)
+            faulty_row = next((r for r in telemetry if r.get("fault_label") == 1), None)
+            if faulty_row:
+                m = faulty_row.get("metrics", {})
+                answer = (
+                    f"Telemetry analysis: Node {faulty_row.get('node_id')} on Slice {faulty_row.get('slice_id')} "
+                    f"exhibits {faulty_row.get('fault_type', 'anomaly')} with CPU={m.get('cpu', 0)}%, "
+                    f"latency={m.get('latency_ms', 0)}ms, packet_loss={m.get('packet_loss', 0)}%."
+                )
+            else:
+                if result:
+                    names = ", ".join(node.get("label", node.get("node_id", "")) for node in result[:3])
+                    answer = f"No active anomalies in telemetry. Found relevant topology nodes: {names}."
+                else:
+                    answer = "No active anomalies in telemetry, and no matching topology nodes were found."
+
         return {"cypher": cypher, "parameters": {"slice_id": slice_id, "node_id": node_id}, "result": result, "answer": answer}
 
     def nl_to_cypher(self, question: str) -> dict[str, Any]:
@@ -738,13 +759,53 @@ Cypher: MATCH (s:Slice {id:'slice_1'})--(n) RETURN count(n)
                 except Exception as exc:
                     logger.warning("Groq NL-to-Cypher failed for %s: %s. Trying fallback model or regex.", model, exc)
         fallback = self._regex_query(question)
+        answer = fallback.get("answer", "")
+
+        if settings.groq_api_key and method == "groq_llm":
+            try:
+                telemetry = db.latest_telemetry(10)
+                active_telemetry = [t for t in telemetry if t.get("fault_label") == 1]
+
+                context_prompt = f"""You are NetOracle, an AI diagnostics assistant for a 5G network.
+Answer the user's question based on the network's current state and query results.
+
+User Question: {question}
+Translated Cypher query: {cypher}
+Database Results: {json.dumps(fallback["result"], indent=2)}
+Active Telemetry Anomalies: {json.dumps(active_telemetry, indent=2)}
+
+Provide a concise, professional answer (2-3 sentences max).
+- If greeting (e.g. "Hi", "Hello"), greet the user back and explain how you can help.
+- If asking about latency, faults, or congestion, analyze the database results and active telemetry.
+- Do not wrap the response in JSON or Markdown blocks.
+"""
+                for model in groq_model_candidates():
+                    try:
+                        resp = requests.post(
+                            "https://api.groq.com/openai/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
+                            json={
+                                "model": model,
+                                "messages": [{"role": "user", "content": context_prompt}],
+                                "temperature": 0.3
+                            },
+                            timeout=10,
+                        )
+                        resp.raise_for_status()
+                        answer = resp.json()["choices"][0]["message"]["content"].strip()
+                        break
+                    except Exception as e:
+                        logger.warning("Groq model %s failed to generate explanation: %s", model, e)
+            except Exception as e:
+                logger.warning("Groq explanation pipeline failed: %s", e)
+
         payload = {
             "question": question,
             "cypher": cypher or fallback["cypher"],
             "method": method,
             "parameters": fallback["parameters"],
             "result": fallback["result"],
-            "answer": fallback.get("answer", ""),
+            "answer": answer,
             "confidence": 0.88 if method == "groq_llm" else 0.65,
         }
         db.audit("nl_to_cypher", payload)

@@ -296,6 +296,27 @@ function renderExecutiveProof(data) {
     <div class="deep-dive"><b>Boss talk track</b><ul>${talk}</ul></div>`;
 }
 
+function renderEvidenceBundle(data) {
+  if (!data) return '<div class="empty-state">No evidence bundle available.</div>';
+  const dist = Object.entries(data.source_distribution || {})
+    .map(([source, count]) => metricPill(human(source), count, source.includes('live') ? 'good' : source.includes('partial') ? 'warn' : ''))
+    .join('');
+  const latest = (data.latest_frames || []).slice(-4).map(frame => {
+    const ev = frame.evidence || {};
+    const queries = (ev.queries || []).slice(0, 3).map(q => `${q.name}: ${q.value ?? 'missing'}`).join(', ');
+    return `<div class="evidence-row"><span>${human(frame.source || 'unknown')}</span><div><b>${frame.node_id} ${frame.node_type}</b><p>${queries || human(frame.source_detail?.fallback_reason || 'no query evidence')}</p></div></div>`;
+  }).join('');
+  const artifacts = Object.entries(data.artifacts || {})
+    .map(([name, path]) => `<li><code>${human(name)}</code>: ${path}</li>`).join('');
+  const boundaries = Object.entries(data.claim_boundaries || {})
+    .map(([name, meaning]) => `<li><b>${human(name)}</b>: ${meaning}</li>`).join('');
+  return `
+    <div class="metric-strip">${dist || metricPill('Sources', 'none', 'warn')}</div>
+    <div class="evidence-stack">${latest || '<div class="muted-note">No frame-level evidence yet.</div>'}</div>
+    <div class="deep-dive"><b>Local artifacts</b><ul>${artifacts}</ul></div>
+    <div class="deep-dive"><b>Claim boundaries</b><ul>${boundaries}</ul></div>`;
+}
+
 function renderTemplates(data) {
   return `
     <div class="summary-card"><h3>Telemetry CSV Header</h3><code>${data.telemetry_csv_header}</code></div>
@@ -308,10 +329,197 @@ function setStatus(mode, label) {
   html('wsStatus', `<span class="pulse-dot ${cls}"></span>${label}`);
 }
 
+/**
+ * Update the prominent data-source banner (live / partial / simulated).
+ * Called on every WS tick so it immediately reflects reality.
+ * @param {string} source - one of: open5gs_live, open5gs_partial, open5gs_simulated, simulated, csv_stream, prometheus
+ */
+function updateSourceBanner(source) {
+  const el = $('datasourceBanner');
+  if (!el) return;
+  el.className = 'status-pill source-badge';
+
+  // Detect source category for transition toasts
+  const isLive = source === 'open5gs_live' || source === 'prometheus';
+  const isPartial = source === 'open5gs_partial' || source === 'csv_stream';
+  const prevIsLive = _lastSource === 'open5gs_live' || _lastSource === 'prometheus';
+  const prevIsPartial = _lastSource === 'open5gs_partial' || _lastSource === 'csv_stream';
+
+  if (source !== _lastSource && _lastSource !== null) {
+    if (isLive && !prevIsLive) {
+      toast('⬤ Data source switched to LIVE Open5GS telemetry', 'success');
+    } else if (!isLive && !isPartial && (prevIsLive || prevIsPartial)) {
+      toast('◯ Data source fell back to SIMULATED telemetry', 'warn');
+    } else if (isPartial && !prevIsPartial && !prevIsLive) {
+      toast('⬤ Partial live data: Prometheus reachable, some NFs simulated', 'info');
+    }
+  }
+  _lastSource = source;
+
+  if (source === 'open5gs_live') {
+    el.classList.add('source-live');
+    el.textContent = '\u2B24 LIVE \u2014 Open5GS';
+    el.title = 'Receiving real metrics from Open5GS + Prometheus';
+  } else if (source === 'open5gs_partial') {
+    el.classList.add('source-partial');
+    el.textContent = '\u2B24 PARTIAL \u2014 Open5GS';
+    el.title = 'Prometheus reachable but some NFs are falling back to simulation';
+  } else if (source === 'open5gs_simulated' || source === 'simulated') {
+    el.classList.add('source-simulated');
+    el.textContent = '\u25CB SIMULATED';
+    el.title = 'Open5GS / Prometheus not reachable \u2014 using simulated telemetry';
+  } else if (source === 'csv_stream') {
+    el.classList.add('source-partial');
+    el.textContent = '\u2B24 CSV STREAM';
+    el.title = 'Streaming from uploaded CSV file';
+  } else if (source === 'prometheus') {
+    el.classList.add('source-live');
+    el.textContent = '\u2B24 LIVE \u2014 Prometheus';
+    el.title = 'Receiving real metrics from Prometheus adapter';
+  } else {
+    el.classList.add('source-simulated');
+    el.textContent = '\u25CB SIMULATED';
+    el.title = `Source: ${source || 'unknown'}`;
+  }
+}
+
 function setRing(id, pct) {
   const ring = $(id);
   if (!ring) return;
   ring.style.setProperty('--pct', Math.max(0, Math.min(100, pct)));
+}
+
+// ── Conformal Interval Bar ────────────────────────────────────────────
+/**
+ * Update the Split Conformal Prediction interval bar under the fault probability KPI.
+ * @param {object} alertData - the alert object from the latest tick payload
+ */
+function updateConformalInterval(alertData) {
+  const fill   = $('ciFill');
+  const point  = $('ciPoint');
+  const label  = $('ciLabel');
+  if (!fill || !point || !label) return;
+
+  const prob  = alertData?.fault_probability ?? null;
+  const lo    = alertData?.prob_lower ?? null;
+  const hi    = alertData?.prob_upper ?? null;
+  const qhat  = alertData?.q_hat ?? null;
+  const aciOn = alertData?.aci_active ?? false;
+
+  if (prob === null || lo === null || hi === null) {
+    label.textContent = 'q\u0302 = --';
+    label.className = 'ci-label';
+    return;
+  }
+
+  // Map [0,1] probability range to [0%,100%] bar position
+  fill.style.left  = `${lo * 100}%`;
+  fill.style.width = `${(hi - lo) * 100}%`;
+  point.style.left = `${prob * 100}%`;
+
+  const qStr = qhat !== null ? `q\u0302=${qhat.toFixed(3)}` : '';
+  const ciStr = `[${lo.toFixed(2)}, ${hi.toFixed(2)}]`;
+  label.textContent = `${qStr}  ${ciStr}${aciOn ? '  \u2022 ACI' : ''}`;
+  label.className = `ci-label${aciOn ? ' aci-active' : ''}`;
+}
+
+// ── ACI Status Panel Renderer ─────────────────────────────────────────
+function renderAciPanel(data) {
+  const panel = $('aciPanel');
+  if (!panel) return;
+  if (!data) {
+    panel.innerHTML = '<div class="empty-state">ACI report unavailable. Run predictions first.</div>';
+    return;
+  }
+
+  const cal = data.calibration || {};
+  const aci = data.aci || {};
+
+  if (!cal.is_calibrated) {
+    panel.innerHTML = `<div class="empty-state">Conformal predictor not calibrated. 
+    Calibration file missing — run training pipeline first.</div>`;
+    return;
+  }
+
+  if (aci.aci_updates === 0) {
+    panel.innerHTML = `
+      <div class="aci-metric">
+        <span class="aci-val">${cal.q_hat !== null ? cal.q_hat.toFixed(4) : '--'}</span>
+        <span class="aci-lbl">Initial q̂</span>
+      </div>
+      <div class="aci-metric">
+        <span class="aci-val">${cal.coverage_guarantee || '--'}</span>
+        <span class="aci-lbl">Coverage Target</span>
+      </div>
+      <div class="aci-metric">
+        <span class="aci-val">${cal.n_calibration || '--'}</span>
+        <span class="aci-lbl">Cal. Samples</span>
+      </div>
+      <div class="empty-state" style="grid-column:1/-1; margin-top:4px">
+        ACI adaptation starts when you call /api/conformal/update with resolved fault labels.
+      </div>`;
+    return;
+  }
+
+  const covMet = aci.coverage_met;
+  const empCov = (aci.empirical_coverage * 100).toFixed(1);
+  const targCov = (aci.target_coverage * 100).toFixed(1);
+  const drift = aci.coverage_drift > 0 ? `+${(aci.coverage_drift*100).toFixed(1)}%` : `${(aci.coverage_drift*100).toFixed(1)}%`;
+
+  // Build history table rows
+  const rows = (aci.recent_history || []).slice(-8).reverse().map(h => `
+    <tr class="${h.covered ? 'covered' : 'missed'}">
+      <td>${h.t}</td>
+      <td>${h.prediction.toFixed(3)}</td>
+      <td>${h.true_label}</td>
+      <td>${h.covered ? '\u2713' : '\u2717'}</td>
+      <td>${h.old_q_hat.toFixed(4)}</td>
+      <td>${h.new_q_hat.toFixed(4)}</td>
+      <td>${h.running_coverage.toFixed(3)}</td>
+    </tr>`).join('');
+
+  panel.innerHTML = `
+    <div class="aci-metric${covMet ? ' good' : ' warn'}">
+      <span class="aci-val">${empCov}%</span>
+      <span class="aci-lbl">Empirical Coverage</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${targCov}%</span>
+      <span class="aci-lbl">Target (1-\u03b1)</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${drift}</span>
+      <span class="aci-lbl">Coverage Drift</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${aci.current_q_hat?.toFixed(4) ?? '--'}</span>
+      <span class="aci-lbl">Current q̂</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${aci.aci_updates}</span>
+      <span class="aci-lbl">ACI Updates</span>
+    </div>
+    <div class="aci-metric">
+      <span class="aci-val">${aci.gamma ?? '--'}</span>
+      <span class="aci-lbl">\u03b3 (step size)</span>
+    </div>
+    <div style="grid-column:1/-1">
+      <table class="aci-history-table">
+        <thead><tr>
+          <th>t</th><th>p̂</th><th>y</th><th>\u2713/\u2717</th><th>q̂ old</th><th>q̂ new</th><th>Cov.</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function refreshAciPanel() {
+  try {
+    const r = await api('/api/conformal/report');
+    renderAciPanel(r.data);
+  } catch (e) {
+    console.warn('ACI report failed:', e);
+  }
 }
 
 function updateKpis(alert, diagnosis, remediation, metrics = state.metrics) {
@@ -337,8 +545,19 @@ function updateKpis(alert, diagnosis, remediation, metrics = state.metrics) {
   }
 }
 
-function toast(message) {
-  console.warn(message);
+// ── Toast Notification System ────────────────────────────────────────
+let _lastSource = null;
+
+function toast(message, type = 'info', duration = 4000) {
+  // type: 'info' | 'success' | 'warn' | 'error'
+  console.warn(`[toast:${type}]`, message);
+  const container = $('toastContainer');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), duration + 400);
 }
 
 class TelemetryChart {
@@ -378,6 +597,12 @@ class TelemetryChart {
     this.g.selectAll('.fault-marker').data(data.filter(d => d.fault_label)).enter().append('line')
       .attr('x1', d => x(d.i)).attr('x2', d => x(d.i)).attr('y1', 0).attr('y2', innerH)
       .attr('stroke', '#ff3366').attr('stroke-dasharray', '4 5').attr('opacity', 0.55);
+    // Source indicator strip: green=live, amber=partial, gray=simulated
+    const sourceColorMap = { open5gs_live: '#00ff88', prometheus: '#00ff88', open5gs_partial: '#ffb800', csv_stream: '#ffb800' };
+    this.g.selectAll('.src-tick').data(data).enter().append('rect')
+      .attr('x', d => x(d.i) - 1).attr('y', innerH + 2).attr('width', 2).attr('height', 4)
+      .attr('fill', d => sourceColorMap[d.source] || 'rgba(107,138,170,0.3)')
+      .attr('rx', 1);
   }
 }
 
@@ -589,6 +814,13 @@ async function refreshProactive() {
   return state.proactive;
 }
 
+async function refreshEvidence() {
+  html('evidencePanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  const res = await api('/api/evidence/latest?limit=12');
+  html('evidencePanel', renderEvidenceBundle(res.data));
+  return res.data;
+}
+
 async function refreshAutopilot() {
   html('autopilotPanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
   const res = await api('/api/proactive/autopilot');
@@ -604,12 +836,18 @@ async function refreshExecutiveProof() {
 }
 
 async function refreshAll() {
-  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshProactive(), refreshAutopilot(), refreshMetrics(), explainCurrentTab(false)]);
+  await Promise.allSettled([refreshTelemetry(), refreshDAG(), refreshTopology(), refreshAudit(), refreshDataMode(), refreshEvidence(), refreshProactive(), refreshAutopilot(), refreshMetrics(), explainCurrentTab(false)]);
 }
 
 function handleTick(payload) {
   state.tickCount += 1;
   text('tickCount', state.tickCount);
+
+  // Update source banner on every tick so it immediately reflects data origin
+  if (payload.source || (payload.frames?.length && payload.frames[0]?.source)) {
+    updateSourceBanner(payload.source || payload.frames[0]?.source);
+  }
+
   if (payload.frames?.length) {
     const frames = payload.frames.map(normalizeFrame);
     state.telemetry.push(...frames);
@@ -620,14 +858,20 @@ function handleTick(payload) {
     state.metrics = payload.metrics;
     updateKpis(payload.alert || state.latestAlert, null, null, state.metrics);
   }
+  if (payload.alert) {
+    state.latestAlert = payload.alert;
+    renderAlert(payload.alert);
+    // Update conformal interval bar with prediction interval from alert
+    updateConformalInterval(payload.alert);
+  }
   if (payload.proactive) {
     state.proactive = payload.proactive;
     html('proactivePanel', renderForecastCard(state.proactive));
   }
   if (payload.realtime) html('realtimePanel', renderRealtimeAnalysis(payload.realtime));
-  if (payload.alert) renderAlert(payload.alert);
   state.charts.dagMini?.updateLastAlert?.(payload.alert);
 }
+
 
 function connectWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -664,6 +908,7 @@ function setupTabs() {
       if (tab === 'datasources') refreshDataMode().catch(toast);
       if (tab === 'topology') refreshTopology().catch(toast);
       if (tab === 'intelligence') refreshDAG().catch(toast);
+      if (tab === 'intelligence') refreshEvidence().catch(toast);
       if (tab === 'executive') refreshExecutiveProof().catch(toast);
       explainCurrentTab(false).catch(toast);
     });
@@ -673,14 +918,27 @@ function setupTabs() {
 }
 
 function setupButtons() {
-  $('btnTick')?.addEventListener('click', async () => { const r = await api('/api/telemetry/tick', { method: 'POST' }); handleTick({ frames: r.data }); });
+  $('btnTick')?.addEventListener('click', async () => {
+    // POST tick and pass the FULL payload to handleTick (frames + alert + proactive + metrics + source)
+    const r = await api('/api/telemetry/tick', { method: 'POST' });
+    // /api/telemetry/tick returns {ok, data: frames[]} — wrap it into a tick-shaped payload
+    const frames = Array.isArray(r.data) ? r.data : [];
+    const tickSource = frames[0]?.source || 'unknown';
+    handleTick({ frames, source: tickSource });
+    // Refresh other panels that a tick affects
+    await Promise.allSettled([refreshProactive(), refreshMetrics()]);
+  });
   $('btnRefresh')?.addEventListener('click', () => refreshAll().catch(toast));
   $('btnRefreshDAG')?.addEventListener('click', () => refreshDAG().catch(toast));
+  $('btnRefreshACI')?.addEventListener('click', () => refreshAciPanel().catch(e => toast(e.message, 'error')));
   $('btnTopologyRefresh')?.addEventListener('click', () => refreshTopology().catch(toast));
   $('auditFilter')?.addEventListener('change', () => refreshAudit().catch(toast));
   $('severity')?.addEventListener('input', e => text('sevVal', e.target.value));
   $('btnBenchmark')?.addEventListener('click', runBenchmark);
+  $('btnLiveBenchmark')?.addEventListener('click', runLiveBenchmark);
+  $('btnEvidence')?.addEventListener('click', () => refreshEvidence().catch(e => toast(e.message, 'error')));
   $('btnHopfield')?.addEventListener('click', runHopfield);
+
   $('btnPolicy')?.addEventListener('click', showPolicy);
   $('btnAdaptiveWireless')?.addEventListener('click', buildAdaptiveWirelessPlan);
   $('btnStressTest')?.addEventListener('click', runStressTest);
@@ -767,18 +1025,66 @@ async function askDiagnosisQuestion() {
   html('diagNlAnswer', renderNlAnswer(result.data));
 }
 
+async function pollJob(jobId, onUpdate, intervalMs = 2000, maxWaitMs = 120000) {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = async () => {
+      try {
+        const r = await fetch(`/api/jobs/${jobId}`);
+        const j = await r.json();
+        const job = j.data || {};
+        onUpdate(job);
+        if (job.status === 'done') return resolve(job.result);
+        if (job.status === 'error') return reject(new Error(job.error || 'Job failed'));
+        if (Date.now() - start > maxWaitMs) return reject(new Error('Job timed out'));
+        setTimeout(check, intervalMs);
+      } catch (e) { reject(e); }
+    };
+    setTimeout(check, intervalMs);
+  });
+}
+
 async function runBenchmark() {
-  text('benchOutput', 'Running benchmark...');
   const n = Number($('benchScenarios')?.value || 60);
-  const result = await api(`/api/benchmarks/run?scenarios=${n}`, { method: 'POST' });
-  html('benchOutput', renderObjectSummary(result.data, 'Benchmark Summary'));
-  const metrics = result.data?.metrics || {};
+  html('benchOutput', `<div class="xai-loader"><span></span><span></span><span></span></div><p style="text-align:center;color:var(--muted);margin-top:8px">Queuing ${n}-scenario benchmark… this runs in the background.</p>`);
+  try {
+    const r = await api(`/api/benchmarks/run?scenarios=${n}`, { method: 'POST' });
+    const jobId = r.data?.job_id;
+    if (!jobId) throw new Error('No job_id returned');
+    toast(`⚙ Benchmark queued (job ${jobId}) — polling for results…`, 'info');
+    const result = await pollJob(jobId,
+      (job) => text('benchOutput', `⏳ Benchmark ${job.status}… (job ${jobId})`),
+      2500, 180000
+    );
+    html('benchOutput', renderObjectSummary(result, 'Benchmark Results'));
+    const metrics = result?.metrics || result || {};
+    renderBarChart('benchChart', [
+      { label: 'CTGNN ROC AUC', value: metrics.roc_auc || 0, display: pct(metrics.roc_auc), color: 'var(--cyan)' },
+      { label: 'Localisation accuracy', value: metrics.localisation_accuracy || 0, display: pct(metrics.localisation_accuracy), color: 'var(--green)' },
+      { label: 'RCA accuracy', value: metrics.rca_accuracy || 0, display: pct(metrics.rca_accuracy), color: 'var(--purple)' },
+      { label: 'False positive control', value: 1 - (metrics.false_positive_rate || 0), display: pct(1 - (metrics.false_positive_rate || 0)), color: 'var(--amber)' },
+    ]);
+    toast('✅ Benchmark complete', 'success');
+  } catch (e) {
+    html('benchOutput', `<div class="empty-state">Benchmark error: ${e.message}</div>`);
+    toast(e.message, 'error');
+  }
+}
+
+
+async function runLiveBenchmark() {
+  text('benchOutput', 'Computing live evidence benchmark from local artifacts...');
+  const result = await api('/api/benchmarks/live', { method: 'POST' });
+  const data = result.data || {};
+  html('benchOutput', renderObjectSummary(data, 'Live Evidence Benchmark'));
+  const scenario = data.fault_scenarios || {};
+  const model = data.model_comparison || {};
   renderBarChart('benchChart', [
-    { label: 'CTGNN ROC AUC', value: metrics.roc_auc || 0, display: pct(metrics.roc_auc), color: 'var(--cyan)' },
-    { label: 'Localisation accuracy', value: metrics.localisation_accuracy || 0, display: pct(metrics.localisation_accuracy), color: 'var(--green)' },
-    { label: 'RCA accuracy', value: metrics.rca_accuracy || 0, display: pct(metrics.rca_accuracy), color: 'var(--purple)' },
-    { label: 'False positive control', value: 1 - (metrics.false_positive_rate || 0), display: pct(1 - (metrics.false_positive_rate || 0)), color: 'var(--amber)' },
+    { label: 'Live detection rate', value: scenario.detection_rate || 0, display: pct(scenario.detection_rate), color: 'var(--green)' },
+    { label: 'Heuristic live AUC', value: model.heuristic_live_auc || 0, display: model.heuristic_live_auc == null ? 'needs labels' : pct(model.heuristic_live_auc), color: 'var(--amber)' },
+    { label: 'Source live share', value: (data.inputs?.live_rows || 0) / Math.max((data.inputs?.telemetry_rows || 1), 1), display: `${data.inputs?.live_rows || 0}/${data.inputs?.telemetry_rows || 0}`, color: 'var(--cyan)' },
   ]);
+  await refreshEvidence().catch(() => {});
 }
 
 async function runHopfield() {
@@ -786,9 +1092,35 @@ async function runHopfield() {
   const users = Number($('hopUsers')?.value || 8);
   const channels = Number($('hopCh')?.value || 16);
   const result = await api(`/api/wireless/hopfield?users=${users}&channels=${channels}`, { method: 'POST' });
-  html('hopOutput', renderObjectSummary(result.data, 'Hopfield Allocation') + `<div class="math-panel"><b>Lyapunov energy</b><code>E=-1/2ΣᵢΣⱼwᵢⱼsᵢsⱼ+Σᵢθᵢsᵢ</code><p>The allocator converges by reducing network energy while avoiding channel conflicts.</p></div>`);
-  const assignments = result.data?.assignments || [];
+  const data = result.data || {};
+  html('hopOutput', renderObjectSummary(data, 'Hopfield Allocation') + `<div class="math-panel"><b>Lyapunov energy</b><code>E=-1/2ΣᵢΣⱼ wᵢⱼsᵢsⱼ+Σᵢθᵢsᵢ</code><p>The allocator converges by reducing network energy while avoiding channel conflicts.</p></div>`);
+  const assignments = data.assignments || [];
   html('hopfieldViz', assignments.map(a => `<span class="hop-cell active" style="opacity:${Math.max(0.25, a.probability || 0.5)}" title="channel ${a.channel} -> user ${a.user}, p=${a.probability}"></span>`).join(''));
+  // Render energy convergence trace if available
+  const trace = data.energy_trace || [];
+  if (trace.length > 1) {
+    const canvas = $('hopEnergyChart');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const minE = Math.min(...trace), maxE = Math.max(...trace);
+      const rangeE = maxE - minE || 1;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = 'var(--cyan, #00f5ff)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      trace.forEach((e, i) => {
+        const x = (i / (trace.length - 1)) * w;
+        const y = h - ((e - minE) / rangeE) * (h - 8) - 4;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      // Label
+      ctx.fillStyle = 'rgba(0,245,255,0.7)';
+      ctx.font = '10px monospace';
+      ctx.fillText(`E: ${minE.toFixed(2)} → ${trace[trace.length-1].toFixed(2)}`, 4, 12);
+    }
+  }
 }
 
 function renderAdaptiveWirelessPlan(data) {
@@ -903,13 +1235,27 @@ function downloadSyntheticData() {
 }
 
 async function trainGeneratedData() {
-  html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div>');
+  html('syntheticOutput', '<div class="xai-loader"><span></span><span></span><span></span></div><p style="text-align:center;color:var(--muted);margin-top:8px">Queuing retrain job…</p>');
   const payload = { limit: 5000, cpu: true };
   if (state.lastSynthetic?.output) payload.data = state.lastSynthetic.output;
-  const result = await api('/api/training/export-retrain', { method: 'POST', body: JSON.stringify(payload) });
-  html('syntheticOutput', renderObjectSummary(result.data?.export, 'Training Export') + renderObjectSummary(result.data?.training, 'Training Job'));
-  await Promise.allSettled([refreshMetrics(), refreshAudit(), explainCurrentTab(false)]);
+  try {
+    const result = await api('/api/training/export-retrain', { method: 'POST', body: JSON.stringify(payload) });
+    const jobId = result.data?.job_id;
+    if (!jobId) throw new Error('No job_id returned from retrain');
+    toast(`⚙ Retrain queued (job ${jobId}) — polling…`, 'info');
+    const data = await pollJob(jobId,
+      (job) => text('syntheticOutput', `⏳ Retrain ${job.status}… (job ${jobId})`),
+      3000, 300000
+    );
+    html('syntheticOutput', renderObjectSummary(data?.export, 'Training Export') + renderObjectSummary(data?.training, 'Training Job'));
+    toast('✅ Retrain complete', 'success');
+    await Promise.allSettled([refreshMetrics(), refreshAudit(), explainCurrentTab(false)]);
+  } catch (e) {
+    html('syntheticOutput', `<div class="empty-state">Retrain error: ${e.message}</div>`);
+    toast(e.message, 'error');
+  }
 }
+
 
 async function analyseRealtime() {
   html('realtimePanel', '<div class="xai-loader"><span></span><span></span><span></span></div>');
@@ -1019,6 +1365,19 @@ async function init() {
   if (!localStorage.getItem('netor_v2_welcomed') && $('onboardModal')) $('onboardModal').style.display = 'flex';
   await refreshAll();
   connectWebSocket();
+  // Check readiness — show model status in topbar
+  try {
+    const ready = await fetch('/ready').then(r => r.json());
+    const modelPill = $('dataModePill');
+    if (modelPill) {
+      const modelLabel = ready.model === 'CTGNN' ? '🧠 CTGNN' : '⚡ Heuristic';
+      const color = ready.model === 'CTGNN' ? 'var(--cyan)' : 'var(--amber)';
+      modelPill.textContent = modelLabel;
+      modelPill.style.display = '';
+      modelPill.style.color = color;
+      modelPill.title = `Model: ${ready.model} | DB: ${ready.checks?.db ? 'OK' : 'ERR'} | Conformal: ${ready.checks?.conformal_calibrated ? 'calibrated' : 'uncalibrated'}`;
+    }
+  } catch (e) { /* silent — /ready is optional */ }
 }
 
 init().catch(err => {

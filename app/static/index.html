@@ -25,7 +25,8 @@
     <span class="status-pill" id="wsStatus"><span class="pulse-dot pulse-amber"></span>Connecting…</span>
     <span class="status-pill"><span class="pulse-dot pulse-green" id="tickDot"></span><span id="tickCount">0</span> ticks</span>
     <span class="status-pill alert-pill" id="alertBadge" style="display:none"><span class="pulse-dot pulse-red"></span><span id="alertCount">0</span> alerts</span>
-    <span class="status-pill" id="dataModePill">● simulation</span>
+    <span class="status-pill source-badge source-simulated" id="datasourceBanner" title="Current telemetry source">⬤ SIMULATED</span>
+    <span class="status-pill" id="dataModePill" style="display:none">● simulation</span>
   </div>
 </header>
 
@@ -95,6 +96,13 @@
           </div>
           <div class="kpi-label">Fault Probability</div>
           <div class="kpi-sub" id="kpiProbSub">No alert yet</div>
+          <div class="conformal-interval" id="conformalInterval" title="Split Conformal Prediction interval with ACI adaptation">
+            <span class="ci-bar">
+              <span class="ci-fill" id="ciFill"></span>
+              <span class="ci-point" id="ciPoint"></span>
+            </span>
+            <span class="ci-label" id="ciLabel">q̂ = --</span>
+          </div>
         </div>
         <div class="kpi-card" id="kpi-auc">
           <div class="kpi-ring-wrap">
@@ -219,6 +227,15 @@
         </div>
         <div class="terminal narrative-output" id="benchOutput">Click "Run Benchmark" to evaluate CTGNN vs. baselines.</div>
         <div id="benchChart" class="bar-chart"></div>
+      </div>
+      <div class="panel glass-panel">
+        <div class="panel-header">
+          <h2>Adaptive Conformal Inference <span class="badge-muted">§6.3 Novel</span></h2>
+          <button class="btn-secondary mini" id="btnRefreshACI">Refresh ACI</button>
+        </div>
+        <div class="aci-status" id="aciPanel">
+          <div class="empty-state">ACI tracking starts after calibration + live predictions. Click "Refresh ACI" to check status.</div>
+        </div>
       </div>
       <div class="panel glass-panel">
         <div class="panel-header"><h2>DAG History <span class="badge-muted">latest snapshots</span></h2></div>
@@ -346,6 +363,7 @@
             <button class="btn-primary" id="btnHopfield">Run Allocator</button>
           </div>
           <div id="hopfieldViz" class="hopfield-grid"></div>
+          <canvas id="hopEnergyChart" width="400" height="60" style="width:100%;height:60px;background:rgba(0,245,255,0.04);border-radius:6px;margin-top:6px;" title="Hopfield Lyapunov energy convergence trace"></canvas>
           <div class="terminal narrative-output" id="hopOutput">Allocator interpretation will appear here.</div>
         </div>
         <div class="panel glass-panel">
@@ -541,6 +559,7 @@
   </div>
 </div>
 
+<div id="toastContainer"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>

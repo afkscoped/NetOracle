@@ -69,7 +69,7 @@ class TelemetryService:
                 clean_metrics[key] = round(float(value), 6)
             except (TypeError, ValueError):
                 continue
-        return {
+        clean_frame = {
             "timestamp": str(frame.get("timestamp") or datetime.now(timezone.utc).isoformat()),
             "slice_id": str(frame.get("slice_id") or "slice_1"),
             "node_id": str(frame.get("node_id") or "unknown_node"),
@@ -79,6 +79,10 @@ class TelemetryService:
             "fault_type": frame.get("fault_type") or None,
             "source": frame.get("source", "unknown"),
         }
+        for key in ("source_detail", "evidence", "scenario_id"):
+            if key in frame and frame[key] not in (None, ""):
+                clean_frame[key] = frame[key]
+        return clean_frame
 
     def generate_tick(self, fault: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         self.tick += 1

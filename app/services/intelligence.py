@@ -45,6 +45,7 @@ class IntelligenceService:
 
         # Initialize NOTEARS discovery
         self._notears = NOTEARSDiscovery()
+        self.last_probability = 0.0
 
         logger.info(
             f"IntelligenceService initialized: "
@@ -175,7 +176,7 @@ class IntelligenceService:
                 fault_type = self._classify_fault_type(latest["metrics"])
                 _, top_features, _ = self._heuristic_risk_score(latest["metrics"])
                 candidates.append((
-                    probability, slice_id, node_id, fault_type, top_features, ctgnn_result
+                    probability, slice_id, node_id, fault_type, top_features, ctgnn_result, latest
                 ))
             else:
                 # Fallback to heuristic
@@ -183,16 +184,22 @@ class IntelligenceService:
                 conformal_result = self._conformal.predict_with_interval(probability)
                 candidates.append((
                     probability, slice_id, node_id, fault_type, top_features,
-                    {**conformal_result, "model": "heuristic_sigmoid", "inference_ms": 0.0}
+                    {**conformal_result, "model": "heuristic_sigmoid", "inference_ms": 0.0}, latest
                 ))
 
         if not candidates:
             return None
 
         # Select highest probability candidate
-        probability, slice_id, node_id, fault_type, top_features, prediction_detail = max(
+        probability, slice_id, node_id, fault_type, top_features, prediction_detail, latest_row = max(
             candidates, key=lambda item: item[0]
         )
+
+        self.last_probability = float(probability)
+
+        # Run Adaptive Conformal Inference (ACI) update using the latest ground truth label
+        true_label = int(latest_row.get("fault_label") or 0)
+        self._conformal.update(probability, true_label)
 
         if probability < 0.50:
             return None
@@ -228,7 +235,6 @@ class IntelligenceService:
         db.audit("fault_predicted", alert)
         return alert
 
-    # ─── Metrics & Reporting ──────────────────────────────────────────
 
     def metrics(self) -> dict[str, Any]:
         """Return comprehensive system metrics and model comparison."""
@@ -239,10 +245,20 @@ class IntelligenceService:
 
         arch = self._model_meta.get("architecture", "CausalAttentionGRU") if self._model_loaded else "heuristic_sigmoid"
         return {
+            "fault_probability": getattr(self, "last_probability", 0.0),
             "model_active": arch,
             "model_auc": self._model_meta.get("auc", 0.0) if self._model_loaded else 0.0,
+            "model_artifact": {
+                "loaded": self._model_loaded,
+                "path": self._model_meta.get("artifact_path"),
+                "size_bytes": self._model_meta.get("artifact_size_bytes"),
+                "architecture": arch,
+                "window": self._model_meta.get("window", self._window_size),
+                "horizon": self._model_meta.get("horizon"),
+            },
             "conformal_calibrated": self._conformal.is_calibrated,
             "conformal_q_hat": self._conformal.q_hat if self._conformal.is_calibrated else None,
+            "notears_source": "precomputed_artifact" if self._notears._precomputed else "computed_from_telemetry_fallback",
             "auc_proxy": self._model_meta.get("auc", 0.87) if self._model_loaded else 0.87,
             "lead_time_minutes": 10 if alerts else 0,
             "alerts": len(alerts),

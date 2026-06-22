@@ -222,17 +222,20 @@ def test_alert_has_conformal_fields(client):
 
 
 def test_benchmark_run_completes(client):
-    """Benchmark suite runs to completion with all expected fields."""
+    """Benchmark suite queues as a background job and returns job metadata."""
     response = client.post("/api/benchmarks/run?scenarios=12")
     assert response.status_code == 200
     data = response.json()["data"]
-    assert "metrics" in data
-    assert "ablation" in data
-    assert "conformal" in data
-    assert "notears" in data
-    assert "benefit_summary" in data
-    metrics = data["metrics"]
-    assert "roc_auc" in metrics
-    assert "localisation_accuracy" in metrics
-    assert "rca_accuracy" in metrics
-    assert "jain_fairness" in metrics
+    # New async contract: returns job_id immediately, not blocking
+    assert "job_id" in data, f"Expected job_id, got: {data}"
+    assert "status" in data
+    assert data["status"] == "queued"
+    assert "poll" in data
+    assert data["poll"].startswith("/api/jobs/")
+    # Verify the job is registered and pollable
+    job_id = data["job_id"]
+    r2 = client.get(f"/api/jobs/{job_id}")
+    assert r2.status_code == 200
+    job = r2.json()["data"]
+    assert job["job_id"] == job_id
+    assert job["status"] in ("queued", "running", "done", "error")

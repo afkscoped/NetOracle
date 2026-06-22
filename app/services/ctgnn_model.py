@@ -136,6 +136,9 @@ def load_ctgnn_model() -> tuple[Any, dict[str, Any], bool]:
                 "hidden_dim": checkpoint.get("hidden_dim", 96),
                 "metrics": checkpoint.get("metrics", METRICS),
                 "architecture": arch or "CausalAttentionGRU",
+                "artifact_path": str(p),
+                "artifact_size_bytes": p.stat().st_size,
+                "artifact_mtime": p.stat().st_mtime,
             }
             logger.info(f"CTGNN loaded from {p.name}: AUC={metadata['auc']:.4f}, arch={metadata['architecture']}")
             return model, metadata, True

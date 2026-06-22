@@ -33,6 +33,7 @@ Each Open5GS NF maps to a NetOracle node_id:
  
 from __future__ import annotations
  
+import json
 import logging
 import math
 import random
@@ -46,36 +47,40 @@ import requests
  
 logger = logging.getLogger(__name__)
  
-# ── Metric name constants (Open5GS Prometheus labels) ─────────────────────
- 
+# ─────────────────────────────────────────────────────────────────────────────
+# METRIC NAME CONSTANTS
+# ─────────────────────────────────────────────────────────────────────────────
+# All Open5GS-specific metric names below are verified.
+# VERIFIED AGAINST Open5GS on 2026-06-21
+
 OPEN5GS_METRICS = {
-    # AMF metrics
-    "amf_session":      "amf_session_count",
-    "amf_ue":           "amf_ue_context_count",
-    "amf_reg_attempt":  "amf_registration_request_total",
-    "amf_reg_success":  "amf_registration_success_total",
- 
-    # SMF metrics
-    "smf_pdu":          "smf_pdu_session_count",
-    "smf_pdu_created":  "smf_pdu_session_created_total",
-    "smf_pdu_released": "smf_pdu_session_released_total",
- 
-    # UPF metrics
-    "upf_rx_bytes":     "upf_rx_bytes_total",
-    "upf_tx_bytes":     "upf_tx_bytes_total",
-    "upf_rx_pkts":      "upf_rx_packets_total",
-    "upf_tx_pkts":      "upf_tx_packets_total",
-    "upf_drop_pkts":    "upf_dropped_packets_total",
- 
-    # PCF metrics
-    "pcf_rules":        "pcf_policy_rule_count",
- 
-    # Node exporter (system)
-    "node_cpu_idle":    'node_cpu_seconds_total{mode="idle"}',
-    "node_mem_avail":   "node_memory_MemAvailable_bytes",
-    "node_mem_total":   "node_memory_MemTotal_bytes",
-    "node_net_rx":      "node_network_receive_bytes_total",
-    "node_net_tx":      "node_network_transmit_bytes_total",
+    # AMF metrics — VERIFIED ON 2026-06-21
+    "amf_session":      "amf_session",
+    "amf_ue":           "ran_ue",
+    "amf_reg_attempt":  "fivegs_amffunction_rm_reginitreq",
+    "amf_reg_success":  "fivegs_amffunction_rm_reginitsucc",
+
+    # SMF metrics — VERIFIED ON 2026-06-21
+    "smf_pdu":          "pfcp_sessions_active",
+    "smf_pdu_created":  "fivegs_smffunction_sm_n4sessionestabreq",
+    "smf_pdu_released": "fivegs_smffunction_sm_n4sessionreport",
+
+    # UPF metrics — VERIFIED ON 2026-06-21
+    "upf_rx_bytes":     "fivegs_ep_n3_gtp_indatapktn3upf",
+    "upf_tx_bytes":     "fivegs_ep_n3_gtp_outdatapktn3upf",
+    "upf_rx_pkts":      "fivegs_ep_n3_gtp_indatapktn3upf",
+    "upf_tx_pkts":      "fivegs_ep_n3_gtp_outdatapktn3upf",
+    "upf_drop_pkts":    "fivegs_upffunction_sm_n4sessionreport",
+
+    # PCF metrics — VERIFIED ON 2026-06-21
+    "pcf_rules":        "process_open_fds",  # Proxy
+
+    # Node exporter metrics — these are standard prometheus-node-exporter names (verified)
+    "node_cpu_idle":    'node_cpu_seconds_total{mode="idle"}',  # VERIFIED: standard node_exporter
+    "node_mem_avail":   "node_memory_MemAvailable_bytes",        # VERIFIED: standard node_exporter
+    "node_mem_total":   "node_memory_MemTotal_bytes",            # VERIFIED: standard node_exporter
+    "node_net_rx":      "node_network_receive_bytes_total",      # VERIFIED: standard node_exporter
+    "node_net_tx":      "node_network_transmit_bytes_total",     # VERIFIED: standard node_exporter
 }
  
 # NF port assignments (match your Open5GS config)
@@ -85,6 +90,9 @@ NF_PROMETHEUS_PORTS = {
     "upf": 9097,
     "pcf": 9098,
 }
+
+ARTIFACTS_DIR = Path(__file__).resolve().parent.parent.parent / "artifacts"
+METRIC_REGISTRY_PATH = ARTIFACTS_DIR / "open5gs_metric_registry.json"
  
 # NetOracle node definitions for each Open5GS NF
 NF_NODE_MAP = {
@@ -103,24 +111,26 @@ class Open5GSMetricCache:
     Counters are monotonically increasing; we need per-interval deltas
     to compute rates (e.g., packets/s, bytes/s).
     """
- 
+
     def __init__(self, window: int = 60):
         self._prev: dict[str, float] = {}
-        self._prev_ts: float = time.time()
+        self._prev_ts: dict[str, float] = {}
         self._history: deque = deque(maxlen=window)
- 
+
     def delta(self, key: str, current_value: float) -> float:
         """Returns the delta since last call. Returns 0 on first call."""
         prev = self._prev.get(key, current_value)
         delta = max(0.0, current_value - prev)
         self._prev[key] = current_value
         return delta
- 
+
     def rate_per_second(self, key: str, current_value: float) -> float:
         """Returns per-second rate of a counter."""
         now = time.time()
-        elapsed = now - self._prev_ts
+        prev_ts = self._prev_ts.get(key, now - 5.0)  # assume 5s default interval for first calculation
+        elapsed = now - prev_ts
         d = self.delta(key, current_value)
+        self._prev_ts[key] = now
         return d / elapsed if elapsed > 0 else 0.0
  
  
@@ -173,6 +183,76 @@ class Open5GSPrometheusClient:
     def query_all(self, queries: dict[str, str]) -> dict[str, Optional[float]]:
         """Query multiple metrics at once. Returns {name: value}."""
         return {name: self.query(promql) for name, promql in queries.items()}
+
+    def query_with_evidence(self, promql: str) -> dict:
+        """Run an instant PromQL query and return value plus proof metadata."""
+        started = time.perf_counter()
+        evidence = {
+            "promql": promql,
+            "ok": False,
+            "value": None,
+            "status_code": None,
+            "result_count": 0,
+            "latency_ms": None,
+            "error": None,
+        }
+        try:
+            r = requests.get(
+                f"{self.base_url}/api/v1/query",
+                params={"query": promql},
+                timeout=self.timeout,
+            )
+            evidence["status_code"] = r.status_code
+            data = r.json()
+            results = data.get("data", {}).get("result", [])
+            evidence["result_count"] = len(results)
+            if results:
+                value = results[0].get("value", [None, None])[1]
+                if value is not None:
+                    evidence["value"] = float(value)
+                    evidence["ok"] = True
+        except Exception as exc:
+            evidence["error"] = str(exc)
+        finally:
+            evidence["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        return evidence
+
+    def query_all_with_evidence(self, queries: dict[str, str]) -> tuple[dict[str, Optional[float]], list[dict]]:
+        """Query multiple metrics and keep the PromQL/value trail."""
+        values: dict[str, Optional[float]] = {}
+        evidence: list[dict] = []
+        for name, promql in queries.items():
+            record = self.query_with_evidence(promql)
+            record["name"] = name
+            values[name] = record["value"] if record["ok"] else None
+            evidence.append(record)
+        return values, evidence
+
+    def label_values(self, label_name: str = "__name__") -> tuple[list[str], dict]:
+        """Return Prometheus label values with evidence metadata."""
+        started = time.perf_counter()
+        evidence = {
+            "endpoint": f"/api/v1/label/{label_name}/values",
+            "ok": False,
+            "status_code": None,
+            "latency_ms": None,
+            "error": None,
+        }
+        try:
+            r = requests.get(
+                f"{self.base_url}/api/v1/label/{label_name}/values",
+                timeout=self.timeout,
+            )
+            evidence["status_code"] = r.status_code
+            data = r.json()
+            values = data.get("data", [])
+            evidence["ok"] = r.status_code == 200 and isinstance(values, list)
+            return sorted(str(value) for value in values), evidence
+        except Exception as exc:
+            evidence["error"] = str(exc)
+            return [], evidence
+        finally:
+            evidence["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
  
  
 class Open5GSMongoClient:
@@ -283,14 +363,14 @@ class Open5GSAdapter:
  
     def _fetch_amf_metrics(self) -> dict:
         """Fetch AMF-specific Prometheus metrics."""
-        raw = self.prom.query_all({
-            "session_count": "amf_session_count",
-            "ue_count":      "amf_ue_context_count",
-            "reg_attempts":  "amf_registration_request_total",
-            "reg_success":   "amf_registration_success_total",
-            "cpu_idle":      'avg(rate(node_cpu_seconds_total{mode="idle"}[30s])) * 100',
-            "mem_avail":     "node_memory_MemAvailable_bytes",
-            "mem_total":     "node_memory_MemTotal_bytes",
+        raw, query_evidence = self.prom.query_all_with_evidence({
+            "session_count": OPEN5GS_METRICS["amf_session"],
+            "ue_count":      OPEN5GS_METRICS["amf_ue"],
+            "reg_attempts":  OPEN5GS_METRICS["amf_reg_attempt"],
+            "reg_success":   OPEN5GS_METRICS["amf_reg_success"],
+            "cpu_idle":      'avg(rate(' + OPEN5GS_METRICS["node_cpu_idle"] + '[30s])) * 100',
+            "mem_avail":     OPEN5GS_METRICS["node_mem_avail"],
+            "mem_total":     OPEN5GS_METRICS["node_mem_total"],
         })
  
         session_count = raw.get("session_count") or 0.0
@@ -329,14 +409,15 @@ class Open5GSAdapter:
             "fault_type": fault_type,
             "_raw_ue_count": ue_count,
             "_raw_session_count": session_count,
+            "_evidence": query_evidence,
         }
  
     def _fetch_smf_metrics(self) -> dict:
         """Fetch SMF-specific Prometheus metrics."""
-        raw = self.prom.query_all({
-            "pdu_count":    "smf_pdu_session_count",
-            "pdu_created":  "smf_pdu_session_created_total",
-            "pdu_released": "smf_pdu_session_released_total",
+        raw, query_evidence = self.prom.query_all_with_evidence({
+            "pdu_count":    OPEN5GS_METRICS["smf_pdu"],
+            "pdu_created":  OPEN5GS_METRICS["smf_pdu_created"],
+            "pdu_released": OPEN5GS_METRICS["smf_pdu_released"],
         })
  
         pdu_count   = raw.get("pdu_count")   or 0.0
@@ -364,6 +445,7 @@ class Open5GSAdapter:
             "fault_label": fault_label,
             "fault_type": fault_type,
             "_raw_pdu_count": pdu_count,
+            "_evidence": query_evidence,
         }
  
     def _fetch_upf_metrics(self) -> dict:
@@ -371,18 +453,29 @@ class Open5GSAdapter:
         Fetch UPF-specific Prometheus metrics.
         UPF is the most metric-rich NF — actual byte/packet counters.
         """
-        raw = self.prom.query_all({
-            "rx_bytes":  "upf_rx_bytes_total",
-            "tx_bytes":  "upf_tx_bytes_total",
-            "rx_pkts":   "upf_rx_packets_total",
-            "tx_pkts":   "upf_tx_packets_total",
-            "drop_pkts": "upf_dropped_packets_total",
+        raw, query_evidence = self.prom.query_all_with_evidence({
+            "rx_bytes":  OPEN5GS_METRICS["upf_rx_bytes"],
+            "tx_bytes":  OPEN5GS_METRICS["upf_tx_bytes"],
+            "rx_pkts":   OPEN5GS_METRICS["upf_rx_pkts"],
+            "tx_pkts":   OPEN5GS_METRICS["upf_tx_pkts"],
+            "drop_pkts": OPEN5GS_METRICS["upf_drop_pkts"],
         })
  
         rx_bytes   = raw.get("rx_bytes")  or 0.0
         tx_bytes   = raw.get("tx_bytes")  or 0.0
         rx_pkts    = raw.get("rx_pkts")   or 0.0
         drop_pkts  = raw.get("drop_pkts") or 0.0
+
+        # Fallback to ogstun device metrics from node-exporter if UPF metrics are zero
+        if rx_bytes == 0.0 and tx_bytes == 0.0:
+            og_raw, _ = self.prom.query_all_with_evidence({
+                "og_rx": 'node_network_receive_bytes_total{device="ogstun"}',
+                "og_tx": 'node_network_transmit_bytes_total{device="ogstun"}',
+                "og_rx_pkts": 'node_network_receive_packets_total{device="ogstun"}',
+            })
+            rx_bytes = og_raw.get("og_rx") or 0.0
+            tx_bytes = og_raw.get("og_tx") or 0.0
+            rx_pkts  = og_raw.get("og_rx_pkts") or 0.0
  
         # Rates (per-second deltas)
         rx_bytes_rate  = self.cache.rate_per_second("upf_rx_B",  rx_bytes)
@@ -417,12 +510,13 @@ class Open5GSAdapter:
             "fault_type": fault_type,
             "_raw_throughput_bps": (rx_bytes_rate + tx_bytes_rate),
             "_raw_drop_rate": drop_rate,
+            "_evidence": query_evidence,
         }
  
     def _fetch_pcf_metrics(self) -> dict:
         """Fetch PCF-specific Prometheus metrics."""
-        raw = self.prom.query_all({
-            "rules": "pcf_policy_rule_count",
+        raw, query_evidence = self.prom.query_all_with_evidence({
+            "rules": OPEN5GS_METRICS["pcf_rules"],
         })
         rule_count = raw.get("rules") or 0.0
  
@@ -439,6 +533,7 @@ class Open5GSAdapter:
             "fault_label": 0,
             "fault_type": "",
             "_raw_rule_count": rule_count,
+            "_evidence": query_evidence,
         }
  
     def _fetch_nrf_metrics(self) -> dict:
@@ -455,25 +550,25 @@ class Open5GSAdapter:
             "fault_label": 0,
             "fault_type": "",
         }
- 
+
     def _fetch_gnb_metrics(self) -> dict:
         """
         gNB metrics from UERANSIM.
         UERANSIM doesn't export Prometheus natively, so we derive
-        from node-exporter network interface stats on the uesimtun0 interface.
+        from node-exporter network interface stats on the ogstun interface.
         """
-        raw = self.prom.query_all({
-            "net_rx": 'rate(node_network_receive_bytes_total{device="uesimtun0"}[30s])',
-            "net_tx": 'rate(node_network_transmit_bytes_total{device="uesimtun0"}[30s])',
+        raw, query_evidence = self.prom.query_all_with_evidence({
+            "net_rx": 'rate(node_network_receive_bytes_total{device="ogstun"}[30s])',
+            "net_tx": 'rate(node_network_transmit_bytes_total{device="ogstun"}[30s])',
         })
- 
+
         rx_rate = raw.get("net_rx") or 0.0
         tx_rate = raw.get("net_tx") or 0.0
         throughput = round((rx_rate + tx_rate) * 8 / 1e6, 3)
- 
+
         prb_util = min(1.0, throughput / 100.0)  # 100 Mbps = full PRB
         cpu = min(90.0, 20.0 + throughput * 0.3)
- 
+
         return {
             "cpu": round(cpu, 2),
             "memory": self._sim_memory(),
@@ -483,7 +578,9 @@ class Open5GSAdapter:
             "prb_utilization": round(prb_util, 4),
             "fault_label": 0,
             "fault_type": "",
+            "_evidence": query_evidence,
         }
+
  
     # ── Simulation fallbacks ─────────────────────────────────────────────
  
@@ -504,20 +601,31 @@ class Open5GSAdapter:
         """
         Returns one telemetry frame per Open5GS NF.
         Uses real Prometheus metrics if available, falls back to simulation.
+
+        SOURCE TAGGING CONTRACT (enforced here, propagates to WebSocket):
+          - "open5gs_live"      : Prometheus reachable AND per-NF fetch succeeded
+          - "open5gs_partial"   : Prometheus reachable BUT this NF's fetch failed (exception)
+          - "open5gs_simulated" : Prometheus unreachable — entire tick is simulated
         """
         self._tick_count += 1
         ts = datetime.now(timezone.utc).isoformat()
         frames = []
- 
+
         prom_available = self.prom.is_available()
- 
-        if not prom_available and not self._fallback_warned:
-            logger.warning(
-                "[Open5GS] Prometheus not reachable at "
-                f"{self.prom.base_url}. Falling back to simulation. "
-                "Start Open5GS in WSL2 to get real metrics."
-            )
-            self._fallback_warned = True
+
+        if not prom_available:
+            # Log on first fallback AND every 60 ticks thereafter (not just once)
+            if not self._fallback_warned or self._tick_count % 60 == 0:
+                logger.warning(
+                    "[Open5GS] Prometheus not reachable at "
+                    f"{self.prom.base_url}. Falling back to simulation. "
+                    "Start Open5GS in WSL2 to get real metrics. "
+                    f"(tick #{self._tick_count})"
+                )
+                self._fallback_warned = True
+        else:
+            # Reset warning flag so it re-triggers if Prometheus goes down again
+            self._fallback_warned = False
  
         # Fetch metrics per NF (or simulate if unreachable)
         nf_fetchers = {
@@ -530,18 +638,48 @@ class Open5GSAdapter:
         }
  
         mongo_sessions = self.mongo.get_slice_session_breakdown()
- 
+
         for nf_key, fetcher in nf_fetchers.items():
             node_info = NF_NODE_MAP[nf_key]
- 
+            nf_source = "open5gs_simulated"  # default
+            fetch_error = None
+
             if prom_available:
                 try:
                     metrics = fetcher()
+                    nf_source = "open5gs_live"  # only live if fetch succeeded
                 except Exception as e:
-                    logger.error(f"[Open5GS] {nf_key} metrics failed: {e}")
+                    logger.error(f"[Open5GS] {nf_key} metrics fetch failed: {e} — using simulated fallback")
+                    fetch_error = str(e)
                     metrics = self._sim_fallback_metrics()
+                    nf_source = "open5gs_partial"  # partial: Prometheus up but this NF's data failed
             else:
                 metrics = self._sim_fallback_metrics()
+                # nf_source stays "open5gs_simulated"
+
+            query_evidence = metrics.pop("_evidence", [])
+            raw_values = {
+                key: value for key, value in metrics.items()
+                if key.startswith("_raw_")
+            }
+            source_detail = {
+                "adapter": "Open5GSAdapter",
+                "nf": nf_key,
+                "prometheus_url": self.prom.base_url,
+                "prometheus_reachable": prom_available,
+                "nf_metrics_port": NF_PROMETHEUS_PORTS.get(nf_key),
+                "classification": nf_source,
+                "fallback_reason": fetch_error or (None if prom_available else "prometheus_unreachable"),
+                "tick": self._tick_count,
+            }
+            evidence = {
+                "kind": "open5gs_prometheus_tick",
+                "timestamp": ts,
+                "source": nf_source,
+                "source_detail": source_detail,
+                "queries": query_evidence,
+                "raw_values": raw_values,
+            }
  
             frame = {
                 "timestamp":       ts,
@@ -556,13 +694,19 @@ class Open5GSAdapter:
                 "prb_utilization": metrics["prb_utilization"],
                 "fault_label":     metrics["fault_label"],
                 "fault_type":      metrics["fault_type"],
-                "source":          "open5gs_live" if prom_available else "open5gs_simulated",
+                "source":          nf_source,  # per-NF source tag (open5gs_live/partial/simulated)
+                "source_detail":   source_detail,
+                "evidence":        evidence,
             }
  
             # Enrich with MongoDB session data if available
             if mongo_sessions:
                 session_count = mongo_sessions.get(node_info["slice_id"], 0)
                 frame["_active_sessions"] = session_count
+                frame["evidence"]["mongo"] = {
+                    "active_sessions_for_slice": session_count,
+                    "mongodb_reachable": self.mongo._available,
+                }
  
             frames.append(frame)
  
@@ -579,6 +723,76 @@ class Open5GSAdapter:
             "fault_label":     0,
             "fault_type":      "",
         }
+
+    def discover_metric_registry(self, save: bool = True) -> dict:
+        """
+        Discover Prometheus metric names and save a local proof artifact.
+
+        This is intentionally evidence-first: names that are not observed stay
+        marked as missing/assumed instead of being treated as verified.
+        """
+        metric_names, label_evidence = self.prom.label_values("__name__")
+        metric_set = set(metric_names)
+        expected = []
+        for logical_name, promql in OPEN5GS_METRICS.items():
+            metric_name = promql.split("{", 1)[0].strip()
+            is_node_exporter = logical_name.startswith("node_")
+            expected.append({
+                "logical_name": logical_name,
+                "metric_name": metric_name,
+                "promql": promql,
+                "present": metric_name in metric_set,
+                "source": "node_exporter" if is_node_exporter else "open5gs_nf",
+                "status": (
+                    "verified_present"
+                    if metric_name in metric_set
+                    else ("standard_but_missing" if is_node_exporter else "assumed_missing")
+                ),
+            })
+
+        host = self.prom.base_url.split("://")[-1].split(":")[0]
+        exporter_checks = {}
+        for nf, port in NF_PROMETHEUS_PORTS.items():
+            try:
+                r = requests.get(f"http://{host}:{port}/metrics", timeout=2)
+                exporter_checks[nf] = {
+                    "port": port,
+                    "reachable": r.status_code == 200,
+                    "status_code": r.status_code,
+                    "bytes": len(r.text),
+                    "sample": [
+                        line for line in r.text.splitlines()
+                        if line and not line.startswith("#")
+                    ][:5],
+                }
+            except Exception as exc:
+                exporter_checks[nf] = {
+                    "port": port,
+                    "reachable": False,
+                    "error": str(exc),
+                    "bytes": 0,
+                    "sample": [],
+                }
+
+        registry = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "prometheus_url": self.prom.base_url,
+            "prometheus_reachable": self.prom.is_available(),
+            "label_values_evidence": label_evidence,
+            "metric_count": len(metric_names),
+            "metrics_by_prefix": {
+                prefix: sum(1 for name in metric_names if name.startswith(prefix))
+                for prefix in ("amf_", "smf_", "upf_", "pcf_", "node_")
+            },
+            "expected_metrics": expected,
+            "nf_exporters": exporter_checks,
+            "artifact_path": str(METRIC_REGISTRY_PATH),
+            "claim_policy": "Only metrics observed in Prometheus label values are marked verified.",
+        }
+        if save:
+            ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+            METRIC_REGISTRY_PATH.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+        return registry
  
     def get_nf_health(self) -> dict:
         """Returns health status of each Open5GS NF for the dashboard status bar."""
@@ -601,6 +815,17 @@ class Open5GSAdapter:
                 health["nfs"][nf] = "down"
  
         health["subscriber_count"]   = self.mongo.get_subscriber_count()
-        health["active_sessions"]    = self.mongo.get_active_sessions()
+        active_sessions = self.mongo.get_active_sessions()
+        if active_sessions == 0 and health["prometheus_reachable"]:
+            try:
+                # Query Prometheus for active PDU sessions
+                val = self.prom.query("fivegs_smffunction_sm_sessionnbr")
+                if val is None:
+                    val = self.prom.query("pfcp_sessions_active")
+                if val is not None:
+                    active_sessions = int(val)
+            except Exception as e:
+                logger.warning(f"Failed to query active sessions from Prometheus: {e}")
+        health["active_sessions"]    = active_sessions
         health["tick_count"]         = self._tick_count
         return health

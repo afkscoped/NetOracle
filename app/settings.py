@@ -49,7 +49,11 @@ class Settings:
 
     @property
     def db_path(self) -> Path:
-        return Path(self.database_path).expanduser().resolve()
+        resolved_path = Path(self.database_path).expanduser().resolve()
+        import sys
+        if sys.platform.startswith("linux") and str(resolved_path).startswith("/mnt/"):
+            return Path("/tmp/netoracle.db")
+        return resolved_path
 
     @property
     def model_names(self) -> list[str]:

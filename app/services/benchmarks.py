@@ -6,6 +6,7 @@ Includes ablation study comparing CTGNN vs heuristic vs random.
 """
 import json
 import math
+import statistics
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -238,6 +239,122 @@ class BenchmarkService:
         (reports_dir / "latest_benchmark.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         (reports_dir / "latest_benchmark.md").write_text(self.to_markdown(report), encoding="utf-8")
         db.audit("benchmark_run", report)
+        return report
+
+    def run_live(self) -> dict[str, Any]:
+        """
+        Evidence-first live benchmark from local artifacts and labelled telemetry.
+        Never fabricates live scores: missing labels/scenarios are explicit.
+        """
+        reports_dir = Path("reports")
+        scenarios_path = reports_dir / "live_fault_scenarios.json"
+        scenarios = []
+        if scenarios_path.exists():
+            try:
+                payload = json.loads(scenarios_path.read_text(encoding="utf-8"))
+                scenarios = payload.get("scenarios", payload if isinstance(payload, list) else [])
+            except Exception:
+                scenarios = []
+
+        rows = db.latest_telemetry(5000)
+        by_source: dict[str, int] = {}
+        for row in rows:
+            source = str(row.get("source", "unknown"))
+            by_source[source] = by_source.get(source, 0) + 1
+
+        live_rows = [row for row in rows if str(row.get("source", "")).startswith("open5gs")]
+        sim_rows = [row for row in rows if str(row.get("source", "")) in {"simulation", "open5gs_simulated"}]
+
+        live_labels = [int(row.get("fault_label") or 0) for row in live_rows]
+        live_heuristic_scores = [
+            intelligence_service._heuristic_risk_score(row.get("metrics", {}))[0]
+            for row in live_rows
+        ]
+        live_heuristic_auc = (
+            roc_auc(live_labels, live_heuristic_scores)
+            if len(set(live_labels)) > 1 else None
+        )
+
+        detections = [s for s in scenarios if s.get("detected")]
+        mttd_values = [
+            float(s["time_to_detection_s"])
+            for s in detections
+            if s.get("time_to_detection_s") is not None
+        ]
+        mttd_by_fault: dict[str, list[float]] = {}
+        for scenario in detections:
+            if scenario.get("time_to_detection_s") is None:
+                continue
+            fault_type = str(scenario.get("fault_type", "unknown"))
+            mttd_by_fault.setdefault(fault_type, []).append(float(scenario["time_to_detection_s"]))
+
+        active_model_scores = [
+            float((s.get("alert") or {}).get("fault_probability", 0.0))
+            for s in scenarios
+            if s.get("detected")
+        ]
+
+        conformal_report = intelligence_service._conformal.aci_report()
+        live_conformal_path = Path("artifacts/conformal_calibration_live.json")
+        static_conformal_path = Path("artifacts/conformal_calibration.json")
+        live_conformal = {}
+        static_conformal = {}
+        for path, target in ((live_conformal_path, live_conformal), (static_conformal_path, static_conformal)):
+            if path.exists():
+                try:
+                    target.update(json.loads(path.read_text(encoding="utf-8")))
+                except Exception:
+                    target["error"] = "unreadable"
+
+        dag = intelligence_service.federated_dag()
+        report = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "ok" if scenarios and live_rows else "not_enough_live_data",
+            "inputs": {
+                "telemetry_rows": len(rows),
+                "live_rows": len(live_rows),
+                "simulated_rows": len(sim_rows),
+                "source_distribution": by_source,
+                "scenario_artifact": str(scenarios_path),
+                "scenario_count": len(scenarios),
+            },
+            "fault_scenarios": {
+                "detected": len(detections),
+                "total": len(scenarios),
+                "detection_rate": round(len(detections) / max(len(scenarios), 1), 4) if scenarios else None,
+                "mean_time_to_detection_s": round(statistics.mean(mttd_values), 3) if mttd_values else None,
+                "mttd_by_fault_s": {
+                    fault: round(statistics.mean(values), 3)
+                    for fault, values in mttd_by_fault.items()
+                },
+            },
+            "model_comparison": {
+                "active_model": intelligence_service._model_meta.get("architecture", "heuristic_sigmoid")
+                    if intelligence_service._model_loaded else "heuristic_sigmoid",
+                "active_model_artifact": intelligence_service._model_meta.get("artifact_path"),
+                "active_model_detected_scores": active_model_scores,
+                "heuristic_live_auc": live_heuristic_auc,
+                "heuristic_live_auc_status": "computed" if live_heuristic_auc is not None else "needs_both_positive_and_negative_live_labels",
+            },
+            "conformal": {
+                "aci_report": conformal_report,
+                "live_calibration_artifact": str(live_conformal_path),
+                "live_calibration": live_conformal or None,
+                "static_calibration": static_conformal or None,
+            },
+            "notears": {
+                "algorithm": dag.get("algorithm"),
+                "source": dag.get("source"),
+                "global_edges": len(dag.get("global_edges", [])),
+                "shd_vs_ground_truth": intelligence_service._notears.shd_vs_ground_truth(dag.get("global_edges", [])),
+            },
+            "claim_policy": "Only values computed from local telemetry DB and reports/live_fault_scenarios.json are reported as live evidence.",
+        }
+
+        reports_dir.mkdir(exist_ok=True)
+        output = reports_dir / "benchmarks_live_vs_simulated.json"
+        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        db.audit("live_benchmark_run", {"output": str(output), "status": report["status"], "inputs": report["inputs"]})
         return report
 
     def _status(self, key: str, value: float) -> str:

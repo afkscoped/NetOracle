@@ -101,11 +101,26 @@ class Database:
     def __init__(self) -> None:
         self.path = get_settings().db_path
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._enable_wal()
         self.init()
+
+    def _enable_wal(self) -> None:
+        """Enable WAL journal mode — allows concurrent reads while writing.
+        Also sets busy_timeout so concurrent writers retry instead of crashing.
+        """
+        try:
+            conn = sqlite3.connect(self.path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=3000")  # 3 s retry on lock
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass  # silently degrade on read-only filesystems
 
     @contextmanager
     def connect(self):
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=5)
+        conn.execute("PRAGMA busy_timeout=3000")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -132,6 +147,21 @@ class Database:
             return dict_from_row(row) if row else None
 
     def insert_telemetry(self, frame: dict[str, Any]) -> None:
+        # Build the metrics dict — include source so it round-trips through DB
+        # (source is NOT a separate column — stored in metrics_json for schema compat)
+        metrics = dict(frame.get("metrics") or {})
+        for key in ("cpu", "memory", "latency_ms", "packet_loss", "throughput_mbps", "prb_utilization"):
+            if key in frame and key not in metrics:
+                metrics[key] = frame[key]
+        metadata_keys = {
+            "source": "_source",
+            "source_detail": "_source_detail",
+            "evidence": "_evidence",
+            "scenario_id": "_scenario_id",
+        }
+        for public_key, stored_key in metadata_keys.items():
+            if public_key in frame and frame[public_key] not in (None, ""):
+                metrics[stored_key] = frame[public_key]
         self.execute(
             """
             INSERT INTO telemetry(timestamp, slice_id, node_id, node_type, metrics_json, fault_label, fault_type)
@@ -139,7 +169,7 @@ class Database:
             """,
             (
                 frame["timestamp"], frame["slice_id"], frame["node_id"], frame["node_type"],
-                encode(frame["metrics"]), int(frame.get("fault_label", 0)), frame.get("fault_type")
+                encode(metrics), int(frame.get("fault_label", 0)), frame.get("fault_type")
             ),
         )
 
@@ -147,7 +177,16 @@ class Database:
         rows = self.fetch_all("SELECT * FROM telemetry ORDER BY id DESC LIMIT ?", (limit,))
         rows.reverse()
         for row in rows:
-            row["metrics"] = decode(row.pop("metrics_json"), {})
+            metrics = decode(row.pop("metrics_json"), {})
+            for stored_key, public_key in (
+                ("_source", "source"),
+                ("_source_detail", "source_detail"),
+                ("_evidence", "evidence"),
+                ("_scenario_id", "scenario_id"),
+            ):
+                if stored_key in metrics:
+                    row[public_key] = metrics.pop(stored_key)
+            row["metrics"] = metrics
         return rows
 
     def telemetry_for_node(self, slice_id: str, node_id: str, limit: int = 60) -> list[dict[str, Any]]:
@@ -157,7 +196,16 @@ class Database:
         )
         rows.reverse()
         for row in rows:
-            row["metrics"] = decode(row.pop("metrics_json"), {})
+            metrics = decode(row.pop("metrics_json"), {})
+            for stored_key, public_key in (
+                ("_source", "source"),
+                ("_source_detail", "source_detail"),
+                ("_evidence", "evidence"),
+                ("_scenario_id", "scenario_id"),
+            ):
+                if stored_key in metrics:
+                    row[public_key] = metrics.pop(stored_key)
+            row["metrics"] = metrics
         return rows
 
     def upsert_alert(self, alert: dict[str, Any]) -> None:

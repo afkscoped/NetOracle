@@ -44,7 +44,7 @@ export default function Diagnosis() {
   const [chatHistory, setChatHistory] = useState([
     {
       sender: 'system',
-      text: 'Hello. I am the NetOracle Diagnostics agent. Ask me about root causes, performance impacts, or remediations.',
+      text: 'NetOracle Diagnostics Agent initialized. Ask me about root causes, performance impacts, or recommended remediations.',
       timestamp: new Date().toLocaleTimeString(),
     },
   ]);

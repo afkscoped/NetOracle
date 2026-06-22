@@ -766,19 +766,19 @@ Cypher: MATCH (s:Slice {id:'slice_1'})--(n) RETURN count(n)
                 telemetry = db.latest_telemetry(10)
                 active_telemetry = [t for t in telemetry if t.get("fault_label") == 1]
 
-                context_prompt = f"""You are NetOracle, an AI diagnostics assistant for a 5G network.
-Answer the user's question based on the network's current state and query results.
+                system_instruction = """You are NetOracle, an expert AI diagnostics agent for a 5G network. 
+Provide a concise, professional, and standard engineering answer (max 2-3 sentences).
+Speak directly like a senior Network Operations Center (NOC) engineer.
+- Do NOT introduce yourself or say 'Hello, I'm NetOracle' or 'As an AI diagnostics assistant' at the beginning of the reply. Start directly with the data or answer.
+- If the user specifically greets you (e.g. 'Hi', 'Hello'), you may greet them back briefly and ask how to help. Otherwise, immediately answer the query directly.
+- Base your answer strictly on the provided Database Results and Active Telemetry Anomalies.
+- Do not wrap the response in JSON or markdown code blocks."""
 
-User Question: {question}
+                user_content = f"""User Question: {question}
 Translated Cypher query: {cypher}
 Database Results: {json.dumps(fallback["result"], indent=2)}
-Active Telemetry Anomalies: {json.dumps(active_telemetry, indent=2)}
+Active Telemetry Anomalies: {json.dumps(active_telemetry, indent=2)}"""
 
-Provide a concise, professional answer (2-3 sentences max).
-- If greeting (e.g. "Hi", "Hello"), greet the user back and explain how you can help.
-- If asking about latency, faults, or congestion, analyze the database results and active telemetry.
-- Do not wrap the response in JSON or Markdown blocks.
-"""
                 for model in groq_model_candidates():
                     try:
                         resp = requests.post(
@@ -786,8 +786,11 @@ Provide a concise, professional answer (2-3 sentences max).
                             headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
                             json={
                                 "model": model,
-                                "messages": [{"role": "user", "content": context_prompt}],
-                                "temperature": 0.3
+                                "messages": [
+                                    {"role": "system", "content": system_instruction},
+                                    {"role": "user", "content": user_content}
+                                ],
+                                "temperature": 0.2
                             },
                             timeout=10,
                         )

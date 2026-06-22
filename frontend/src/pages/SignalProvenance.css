@@ -94,10 +94,12 @@
 
 .query-row code,
 .norm-card code {
+  display: block;
   color: #94a3b8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .metric-grid,

@@ -325,7 +325,7 @@ export default function Diagnosis() {
             <button
               onClick={handleInjectFault}
               disabled={isInjecting}
-              className="flex-grow py-2 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white rounded-lg font-semibold text-xs transition-all active:scale-95 flex items-center justify-center gap-1"
+              className="btn btn-danger flex-grow justify-center"
             >
               {isInjecting ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
               Inject
@@ -333,7 +333,7 @@ export default function Diagnosis() {
             <button
               onClick={handleRunDemo}
               disabled={isDemoRunning}
-              className="py-2 px-3 bg-slate-900 border border-cyan-800/30 text-cyan-400 rounded-lg font-semibold text-xs transition-all hover:bg-slate-800 active:scale-95 flex items-center gap-1"
+              className="btn"
             >
               {isDemoRunning ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
               Demo
@@ -511,7 +511,7 @@ export default function Diagnosis() {
           <button
             type="submit"
             disabled={isChatLoading || !queryText.trim()}
-            className="p-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg transition-all active:scale-95 flex items-center justify-center"
+            className="btn btn-primary p-2 flex items-center justify-center"
           >
             <Send size={14} />
           </button>

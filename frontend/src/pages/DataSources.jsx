@@ -162,12 +162,7 @@ export default function DataSources() {
                     key={mode}
                     onClick={() => handleModeSwitch(mode)}
                     disabled={isSwitching}
-                    style={isActive ? { pointerEvents: 'none' } : {}}
-                    className={`py-3 rounded-xl text-xs font-bold uppercase transition-all tracking-wider flex flex-col items-center justify-center gap-2 ${
-                      isActive
-                        ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.4)]'
-                        : 'bg-slate-900 border border-white/5 hover:bg-slate-800 text-gray-400'
-                    }`}
+                    className={`mode-btn ${isActive ? 'active' : ''}`}
                   >
                     {mode === 'open5gs' ? <Radio size={16} /> : mode === 'simulation' ? <Beaker size={16} /> : <FileUp size={16} />}
                     {mode.replace('_', ' ')}

@@ -338,7 +338,7 @@ export default function Topology() {
         <div className="flex gap-2 text-xs">
           <button
             onClick={resetPathAnalysis}
-            className="px-3 py-1.5 rounded-lg border border-cyan-800/30 text-cyan-400 bg-cyan-950/20 hover:bg-cyan-900/30 transition-all"
+            className="btn btn-sm"
           >
             Clear Path Analysis
           </button>
@@ -535,7 +535,7 @@ export default function Topology() {
                     <button
                       onClick={() => handleExplainNode(selectedNode.id)}
                       disabled={isExplaining}
-                      className="flex items-center justify-center gap-1.5 py-1.5 bg-cyan-950/40 hover:bg-cyan-900/40 border border-cyan-800/30 text-cyan-400 font-semibold rounded-lg text-xs transition-all disabled:opacity-50"
+                      className="btn btn-primary w-full justify-center"
                     >
                       {isExplaining ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
                       Explain Node Behavior
@@ -584,7 +584,7 @@ export default function Topology() {
           <button
             type="submit"
             disabled={isQuerying}
-            className="px-5 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold rounded-lg text-sm transition-all active:scale-95 flex items-center justify-center gap-1.5"
+            className="btn btn-primary justify-center"
           >
             {isQuerying ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
             Search

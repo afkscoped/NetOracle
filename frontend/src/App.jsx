@@ -9,6 +9,8 @@ import WirelessRL from './pages/WirelessRL';
 import AuditTrail from './pages/AuditTrail';
 import DataSources from './pages/DataSources';
 import ExecutiveProof from './pages/ExecutiveProof';
+import SignalProvenance from './pages/SignalProvenance';
+import Observatory from './pages/Observatory';
 import {
   LayoutDashboard,
   Brain,
@@ -23,6 +25,8 @@ import {
   Bell,
   Cpu,
   Globe,
+  GitBranch,
+  Telescope,
 } from 'lucide-react';
 import './App.css';
 
@@ -108,6 +112,12 @@ function AppContent() {
               <NavLink to="/proof" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Award size={16} /> validation
               </NavLink>
+              <NavLink to="/provenance" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <GitBranch size={16} /> Provenance
+              </NavLink>
+              <NavLink to="/observatory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <Telescope size={16} /> Observatory
+              </NavLink>
             </nav>
           </div>
 
@@ -141,6 +151,8 @@ function AppContent() {
             <Route path="/audit" element={<AuditTrail />} />
             <Route path="/datasources" element={<DataSources />} />
             <Route path="/proof" element={<ExecutiveProof />} />
+            <Route path="/provenance" element={<SignalProvenance />} />
+            <Route path="/observatory" element={<Observatory />} />
           </Routes>
         </main>
       </div>

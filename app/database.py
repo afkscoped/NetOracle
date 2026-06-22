@@ -22,6 +22,19 @@ CREATE TABLE IF NOT EXISTS telemetry (
 CREATE INDEX IF NOT EXISTS idx_telemetry_time ON telemetry(timestamp);
 CREATE INDEX IF NOT EXISTS idx_telemetry_node ON telemetry(slice_id, node_id);
 
+CREATE TABLE IF NOT EXISTS telemetry_shadow_sim (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    slice_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    metrics_json TEXT NOT NULL,
+    fault_label INTEGER NOT NULL DEFAULT 0,
+    fault_type TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_telemetry_time ON telemetry_shadow_sim(timestamp);
+CREATE INDEX IF NOT EXISTS idx_shadow_telemetry_node ON telemetry_shadow_sim(slice_id, node_id);
+
 CREATE TABLE IF NOT EXISTS alerts (
     alert_id TEXT PRIMARY KEY,
     timestamp TEXT NOT NULL,
@@ -97,6 +110,37 @@ def dict_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
+def _telemetry_metrics_json(frame: dict[str, Any]) -> str:
+    metrics = dict(frame.get("metrics") or {})
+    for key in ("cpu", "memory", "latency_ms", "packet_loss", "throughput_mbps", "prb_utilization"):
+        if key in frame and key not in metrics:
+            metrics[key] = frame[key]
+    metadata_keys = {
+        "source": "_source",
+        "source_detail": "_source_detail",
+        "evidence": "_evidence",
+        "scenario_id": "_scenario_id",
+    }
+    for public_key, stored_key in metadata_keys.items():
+        if public_key in frame and frame[public_key] not in (None, ""):
+            metrics[stored_key] = frame[public_key]
+    return encode(metrics)
+
+
+def _decode_telemetry_row(row: dict[str, Any]) -> dict[str, Any]:
+    metrics = decode(row.pop("metrics_json"), {})
+    for stored_key, public_key in (
+        ("_source", "source"),
+        ("_source_detail", "source_detail"),
+        ("_evidence", "evidence"),
+        ("_scenario_id", "scenario_id"),
+    ):
+        if stored_key in metrics:
+            row[public_key] = metrics.pop(stored_key)
+    row["metrics"] = metrics
+    return row
+
+
 class Database:
     def __init__(self) -> None:
         self.path = get_settings().db_path
@@ -149,19 +193,6 @@ class Database:
     def insert_telemetry(self, frame: dict[str, Any]) -> None:
         # Build the metrics dict — include source so it round-trips through DB
         # (source is NOT a separate column — stored in metrics_json for schema compat)
-        metrics = dict(frame.get("metrics") or {})
-        for key in ("cpu", "memory", "latency_ms", "packet_loss", "throughput_mbps", "prb_utilization"):
-            if key in frame and key not in metrics:
-                metrics[key] = frame[key]
-        metadata_keys = {
-            "source": "_source",
-            "source_detail": "_source_detail",
-            "evidence": "_evidence",
-            "scenario_id": "_scenario_id",
-        }
-        for public_key, stored_key in metadata_keys.items():
-            if public_key in frame and frame[public_key] not in (None, ""):
-                metrics[stored_key] = frame[public_key]
         self.execute(
             """
             INSERT INTO telemetry(timestamp, slice_id, node_id, node_type, metrics_json, fault_label, fault_type)
@@ -169,25 +200,31 @@ class Database:
             """,
             (
                 frame["timestamp"], frame["slice_id"], frame["node_id"], frame["node_type"],
-                encode(metrics), int(frame.get("fault_label", 0)), frame.get("fault_type")
+                _telemetry_metrics_json(frame), int(frame.get("fault_label", 0)), frame.get("fault_type")
+            ),
+        )
+
+    def insert_shadow_telemetry(self, frame: dict[str, Any]) -> None:
+        self.execute(
+            """
+            INSERT INTO telemetry_shadow_sim(timestamp, slice_id, node_id, node_type, metrics_json, fault_label, fault_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                frame["timestamp"], frame["slice_id"], frame["node_id"], frame["node_type"],
+                _telemetry_metrics_json(frame), int(frame.get("fault_label", 0)), frame.get("fault_type")
             ),
         )
 
     def latest_telemetry(self, limit: int = 300) -> list[dict[str, Any]]:
         rows = self.fetch_all("SELECT * FROM telemetry ORDER BY id DESC LIMIT ?", (limit,))
         rows.reverse()
-        for row in rows:
-            metrics = decode(row.pop("metrics_json"), {})
-            for stored_key, public_key in (
-                ("_source", "source"),
-                ("_source_detail", "source_detail"),
-                ("_evidence", "evidence"),
-                ("_scenario_id", "scenario_id"),
-            ):
-                if stored_key in metrics:
-                    row[public_key] = metrics.pop(stored_key)
-            row["metrics"] = metrics
-        return rows
+        return [_decode_telemetry_row(row) for row in rows]
+
+    def latest_shadow_telemetry(self, limit: int = 300) -> list[dict[str, Any]]:
+        rows = self.fetch_all("SELECT * FROM telemetry_shadow_sim ORDER BY id DESC LIMIT ?", (limit,))
+        rows.reverse()
+        return [_decode_telemetry_row(row) for row in rows]
 
     def telemetry_for_node(self, slice_id: str, node_id: str, limit: int = 60) -> list[dict[str, Any]]:
         rows = self.fetch_all(
@@ -195,18 +232,7 @@ class Database:
             (slice_id, node_id, limit),
         )
         rows.reverse()
-        for row in rows:
-            metrics = decode(row.pop("metrics_json"), {})
-            for stored_key, public_key in (
-                ("_source", "source"),
-                ("_source_detail", "source_detail"),
-                ("_evidence", "evidence"),
-                ("_scenario_id", "scenario_id"),
-            ):
-                if stored_key in metrics:
-                    row[public_key] = metrics.pop(stored_key)
-            row["metrics"] = metrics
-        return rows
+        return [_decode_telemetry_row(row) for row in rows]
 
     def upsert_alert(self, alert: dict[str, Any]) -> None:
         self.execute(

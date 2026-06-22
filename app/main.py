@@ -28,11 +28,14 @@ from app.services.adaptive_rl import adaptive_rl_service
 from app.services.benchmarks import benchmark_service
 from app.services.cloud_sync import cloud_sync_service
 from app.services.data_harmonizer import harmonizer_service
-from app.services.data_sources import get_adapter, reset_adapter
+from app.services.data_sources import SimulationAdapter, get_adapter, reset_adapter
+from app.services.delta_explainer import delta_explainer_service
 from app.services.explainability import explainability_service
 from app.services.graph import graph_service
 from app.services.ingestion import ingestion_service
 from app.services.intelligence import intelligence_service
+from app.services.observatory import observatory_service
+from app.services.provenance import provenance_service
 from app.services.proactive_engine import proactive_engine
 from app.services.rag_llm import rag_llm_service
 from app.services.realtime_engine import realtime_engine
@@ -50,6 +53,16 @@ STATIC_DIR = BASE_DIR / "static"
 # ─── Background Job Registry ────────────────────────────────────────────────
 # In-memory job store for long-running tasks (benchmarks, training).
 _jobs: dict[str, dict[str, Any]] = {}
+_shadow_sim_adapter = SimulationAdapter()
+
+
+def _generate_shadow_sim_tick() -> list[dict[str, Any]]:
+    frames = [telemetry_service._normalise_frame(frame) for frame in _shadow_sim_adapter.get_tick()]
+    for frame in frames:
+        frame["source"] = "shadow_simulation"
+        db.insert_shadow_telemetry(frame)
+    db.audit("shadow_sim_tick", {"frames": len(frames), "source": "shadow_simulation"})
+    return frames
 
 
 def _do_export_retrain(limit: int = 5000, epochs: int = 5) -> dict:
@@ -150,6 +163,7 @@ async def auto_tick() -> None:
         try:
             # Get frames from the configured source
             frames = telemetry_service.generate_tick()
+            shadow_frames = _generate_shadow_sim_tick()
 
             # Auto-retrain trigger: when count crosses a 500-frame threshold
             try:
@@ -185,6 +199,7 @@ async def auto_tick() -> None:
                 "realtime": realtime,
                 "metrics": intelligence_service.metrics(),
                 "source": frames[0].get("source", "unknown") if frames else "unknown",
+                "shadow_source": shadow_frames[0].get("source", "shadow_simulation") if shadow_frames else "shadow_simulation",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
@@ -315,7 +330,9 @@ def status() -> dict:
 
 @app.post("/api/telemetry/tick")
 def telemetry_tick() -> dict:
-    return {"ok": True, "data": telemetry_service.generate_tick()}
+    frames = telemetry_service.generate_tick()
+    _generate_shadow_sim_tick()
+    return {"ok": True, "data": frames}
 
 
 @app.get("/api/telemetry/recent")
@@ -582,6 +599,31 @@ def conformal_report() -> dict:
         "coverage_guarantee": f"{(1 - intelligence_service._conformal.alpha)*100:.0f}%",
     }
     return {"ok": True, "data": {"calibration": cal_info, "aci": report}}
+
+
+@app.get("/api/provenance/latest")
+def provenance_latest() -> dict:
+    return {"ok": True, "data": provenance_service.latest()}
+
+
+@app.post("/api/explain/delta")
+def explain_delta(payload: dict[str, Any] = Body(default={})) -> dict:
+    return {"ok": True, "data": delta_explainer_service.explain(payload)}
+
+
+@app.get("/api/observatory/comparison")
+def observatory_comparison(limit: int = 100) -> dict:
+    return {"ok": True, "data": observatory_service.comparison(max(1, min(limit, 500)))}
+
+
+@app.get("/api/observatory/incident-match")
+def observatory_incident_match() -> dict:
+    return {"ok": True, "data": observatory_service.incident_match()}
+
+
+@app.get("/api/observatory/divergence-log")
+def observatory_divergence_log(limit: int = 100) -> dict:
+    return {"ok": True, "data": observatory_service.divergence_log(max(1, min(limit, 500)))}
 
 
 @app.post("/api/conformal/update")

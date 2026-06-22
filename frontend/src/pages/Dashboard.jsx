@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, AlertTriangle, Wifi, TrendingUp, Zap, RefreshCw, Play, Globe } from 'lucide-react';
+import { Activity, AlertTriangle, Wifi, RefreshCw, Play, GitCompareArrows, Route, Sparkles } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { AppContext } from '../context/AppContext';
+import { api } from '../utils/api';
 import GlassPanel from '../components/GlassPanel';
 import RingGauge from '../components/RingGauge';
 import './Dashboard.css';
@@ -20,11 +21,28 @@ export default function Dashboard() {
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [delta, setDelta] = useState(null);
+
+  async function fetchDelta() {
+    try {
+      setDelta(await api.post('/api/explain/delta'));
+    } catch (err) {
+      console.warn('Delta explanation unavailable:', err);
+    }
+  }
 
   useEffect(() => {
     refreshTelemetry();
     refreshMetrics();
+    const id = setTimeout(fetchDelta, 0);
+    return () => clearTimeout(id);
   }, []);
+
+  useEffect(() => {
+    if (telemetry.length <= 1) return undefined;
+    const id = setTimeout(fetchDelta, 0);
+    return () => clearTimeout(id);
+  }, [telemetry.length]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -56,6 +74,7 @@ export default function Dashboard() {
 
   // Sparkline data for throughput
   const sparklineData = chartData.map((d) => ({ val: d.throughput }));
+  const latestMetrics = telemetry.length > 0 ? telemetry[telemetry.length - 1] : {};
 
   // Break down alert severities
   const criticalAlerts = alerts.filter((a) => a.fault_probability > 0.85).length;
@@ -150,6 +169,33 @@ export default function Dashboard() {
               </LineChart>
             </ResponsiveContainer>
           </div>
+        </GlassPanel>
+      </section>
+
+      <section className="explainability-row grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+        <GlassPanel className="dashboard-explain-card xl:col-span-1" delay={0.21}>
+          <div className="explain-card-head">
+            <Sparkles size={16} className="text-cyan-400" />
+            <h2>Why Did Risk Change?</h2>
+            <button onClick={fetchDelta} title="Refresh explanation"><RefreshCw size={14} /></button>
+          </div>
+          <DeltaExplainer delta={delta} />
+        </GlassPanel>
+
+        <GlassPanel className="dashboard-explain-card xl:col-span-1" delay={0.22}>
+          <div className="explain-card-head">
+            <GitCompareArrows size={16} className="text-cyan-400" />
+            <h2>Feature Attribution</h2>
+          </div>
+          <SHAPBars contributions={delta?.attribution?.contributions} />
+        </GlassPanel>
+
+        <GlassPanel className="dashboard-explain-card xl:col-span-1" delay={0.23}>
+          <div className="explain-card-head">
+            <Route size={16} className="text-cyan-400" />
+            <h2>Causal Chain</h2>
+          </div>
+          <CausalChainAnimator path={delta?.causal_path} metrics={latestMetrics} />
         </GlassPanel>
       </section>
 
@@ -322,6 +368,63 @@ export default function Dashboard() {
           </div>
         </GlassPanel>
       </div>
+    </div>
+  );
+}
+
+function DeltaExplainer({ delta }) {
+  if (!delta || delta.status !== 'ready') {
+    return <p className="explain-muted">Waiting for two comparable ticks on the current node.</p>;
+  }
+  const top = delta.top_change;
+  return (
+    <div className="delta-explainer">
+      {top && (
+        <div className={`change-banner ${top.material ? 'material' : ''}`}>
+          <b>Change Detected - {top.metric}</b>
+          <span>{top.previous} {'->'} {top.current}</span>
+          <em>{top.delta >= 0 ? '+' : ''}{top.delta} | {top.sigma_delta >= 0 ? '+' : ''}{top.sigma_delta} sigma</em>
+        </div>
+      )}
+      <p>{delta.explanation}</p>
+      <div className="risk-delta">
+        <span>Risk impact</span>
+        <b>{delta.risk?.delta >= 0 ? '+' : ''}{((delta.risk?.delta || 0) * 100).toFixed(1)} pp</b>
+      </div>
+    </div>
+  );
+}
+
+function SHAPBars({ contributions = {} }) {
+  const entries = Object.entries(contributions);
+  if (entries.length === 0) return <p className="explain-muted">Attribution appears after the delta endpoint sees a current prediction.</p>;
+  const max = Math.max(...entries.map(([, value]) => Math.abs(Number(value))), 0.001);
+  return (
+    <div className="dashboard-attrib-bars">
+      {entries.map(([metric, value]) => (
+        <div className="dashboard-attrib-row" key={metric}>
+          <span>{metric}</span>
+          <div><i style={{ width: `${Math.min(100, Math.abs(value) / max * 100)}%` }} /></div>
+          <b>{Number(value).toFixed(4)}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CausalChainAnimator({ path = [], metrics = {} }) {
+  const chain = path && path.length ? path : ['cpu', 'latency_ms', 'packet_loss', 'throughput_mbps'];
+  return (
+    <div className="causal-chain">
+      {chain.map((metric, idx) => (
+        <React.Fragment key={metric}>
+          <div className="causal-node">
+            <b>{metric}</b>
+            <span>{metrics[metric] == null ? 'n/a' : Number(metrics[metric]).toFixed(metric === 'packet_loss' ? 4 : 2)}</span>
+          </div>
+          {idx < chain.length - 1 && <div className="causal-arrow" />}
+        </React.Fragment>
+      ))}
     </div>
   );
 }

@@ -197,3 +197,67 @@ def predict_with_model(
     except Exception as e:
         logger.error(f"CTGNN forward pass failed: {e}")
         return None
+
+
+def trace_with_model(
+    model: Any,
+    telemetry_window: list[dict[str, float]],
+    norm_stats: dict[str, dict[str, float]],
+    window_size: int = 12,
+) -> dict[str, Any] | None:
+    """
+    Run inference and return the values needed for Signal Provenance.
+    Existing callers should keep using predict_with_model() for the stable scalar API.
+    """
+    if not TORCH_AVAILABLE or model is None:
+        return None
+    if len(telemetry_window) < window_size:
+        return None
+
+    try:
+        features = []
+        raw_window = []
+        for frame in telemetry_window[-window_size:]:
+            raw_row = {}
+            norm_row = []
+            for metric in METRICS:
+                val = float(frame.get(metric, 0.0))
+                stats = norm_stats.get(metric, {"mean": 0, "std": 1})
+                normalized = (val - stats["mean"]) / (stats["std"] + 1e-6)
+                raw_row[metric] = round(val, 6)
+                norm_row.append(float(normalized))
+            raw_window.append(raw_row)
+            features.append(norm_row)
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        x = torch.tensor([features], dtype=torch.float32).to(device)
+
+        with torch.no_grad():
+            logits, attention_weights = model(x)
+            probability = torch.sigmoid(logits).item()
+
+        attn = attention_weights.detach().cpu()
+        if attn.dim() == 3:
+            attn_values = attn[0].tolist()
+        else:
+            attn_values = attn.squeeze(0).tolist()
+
+        hidden_magnitude = None
+        if hasattr(model, "gru"):
+            with torch.no_grad():
+                h, _ = model.gru(x)
+                hidden_magnitude = float(torch.linalg.vector_norm(h[:, -1, :]).item())
+
+        return {
+            "metrics": METRICS,
+            "raw_window": raw_window,
+            "normalized_tensor": [[round(float(v), 6) for v in row] for row in features],
+            "logit": round(float(logits.detach().cpu().reshape(-1)[0].item()), 6),
+            "probability": round(float(probability), 4),
+            "attention_weights": attn_values,
+            "hidden_state_magnitude": round(hidden_magnitude, 6) if hidden_magnitude is not None else None,
+            "device": str(device),
+        }
+    except Exception as e:
+        logger.error(f"CTGNN trace forward pass failed: {e}")
+        return None

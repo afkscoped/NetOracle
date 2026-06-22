@@ -11,6 +11,7 @@ import DataSources from './pages/DataSources';
 import ExecutiveProof from './pages/ExecutiveProof';
 import SignalProvenance from './pages/SignalProvenance';
 import Observatory from './pages/Observatory';
+import RealTimeIngestion from './pages/RealTimeIngestion';
 import {
   LayoutDashboard,
   Brain,
@@ -27,6 +28,7 @@ import {
   Globe,
   GitBranch,
   Telescope,
+  Activity,
 } from 'lucide-react';
 import './App.css';
 
@@ -109,6 +111,9 @@ function AppContent() {
               <NavLink to="/datasources" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Database size={16} /> Data Sources
               </NavLink>
+              <NavLink to="/ingestion" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <Activity size={16} /> Live Ingestion
+              </NavLink>
               <NavLink to="/proof" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Award size={16} /> validation
               </NavLink>
@@ -150,6 +155,7 @@ function AppContent() {
             <Route path="/wireless" element={<WirelessRL />} />
             <Route path="/audit" element={<AuditTrail />} />
             <Route path="/datasources" element={<DataSources />} />
+            <Route path="/ingestion" element={<RealTimeIngestion />} />
             <Route path="/proof" element={<ExecutiveProof />} />
             <Route path="/provenance" element={<SignalProvenance />} />
             <Route path="/observatory" element={<Observatory />} />

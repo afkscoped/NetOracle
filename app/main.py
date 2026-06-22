@@ -151,6 +151,13 @@ async def auto_tick() -> None:
     settings = get_settings()
     logger.info(f"[AutoTick] Starting with adapter: {adapter.__class__.__name__}")
 
+    # Initialize active nodes cache to prevent unnecessary writes
+    active_nodes_cache = set()
+    try:
+        active_nodes_cache = {node["node_id"] for node in graph_service.nodes() if node.get("node_id")}
+    except Exception:
+        pass
+
     # Initialize telemetry counter for auto-retrain trigger
     try:
         res = db.fetch_one("SELECT COUNT(*) as count FROM telemetry")
@@ -163,6 +170,17 @@ async def auto_tick() -> None:
         try:
             # Get frames from the configured source
             frames = telemetry_service.generate_tick()
+
+            # Sync topology if active nodes changed
+            try:
+                incoming_nodes = {f["node_id"] for f in frames if f.get("node_id")}
+                if incoming_nodes and incoming_nodes != active_nodes_cache:
+                    logger.info(f"[TopologySync] Active nodes changed from {active_nodes_cache} to {incoming_nodes}. Syncing topology...")
+                    graph_service.sync_from_telemetry(frames, origin="live_data_twin")
+                    active_nodes_cache = incoming_nodes
+            except Exception as sync_err:
+                logger.error(f"[TopologySync] Error syncing topology: {sync_err}")
+
             shadow_frames = _generate_shadow_sim_tick()
 
             # Auto-retrain trigger: when count crosses a 500-frame threshold

@@ -14,3 +14,49 @@ pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.68);border
 .detail-card{display:grid;gap:12px;white-space:normal}.detail-card h3{font-size:24px;margin:0;color:var(--cyan)}.detail-card p{margin:0;color:rgba(224,224,224,.78);line-height:1.55}.detail-card code{display:block;padding:10px;border-radius:0;background:rgba(0,255,255,.08);border:1px solid rgba(0,255,255,.24);color:var(--cyan);font-family:'Share Tech Mono',monospace;white-space:normal}
 .mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.mini-grid span{display:grid;gap:4px;padding:10px;border-radius:0;background:rgba(0,0,0,.36);border:1px solid rgba(255,0,255,.25);font-weight:900}.mini-grid b{font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em}
 @keyframes twinPulse{50%{filter:brightness(1.35);transform:scale(1.04)}}
+
+.terminal-feed {
+  max-height: 180px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  padding: 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  color: #4ade80;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.terminal-feed .log-row {
+  line-height: 1.4;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+  padding-bottom: 2px;
+}
+.terminal-feed .log-row:last-child {
+  border-bottom: none;
+}
+.terminal-feed .log-time {
+  color: #06b6d4;
+}
+.terminal-feed .log-node {
+  color: #ffffff;
+  font-weight: bold;
+}
+.mini-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: rgba(224, 224, 224, 0.7);
+}
+.badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: rgba(0, 255, 255, 0.15);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  float: right;
+  margin-top: -2px;
+  letter-spacing: 0.05em;
+}

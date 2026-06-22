@@ -313,8 +313,8 @@ export default function Topology() {
     setNlResponse('');
     try {
       const data = await api.post('/api/nl-query', { query: nlQuery });
-      if (data && data.response) {
-        setNlResponse(data.response);
+      if (data && (data.answer || data.response)) {
+        setNlResponse(data.answer || data.response);
       } else {
         setNlResponse('No anomaly logs match your query bounds.');
       }
